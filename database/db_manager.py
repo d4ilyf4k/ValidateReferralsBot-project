@@ -10,12 +10,11 @@ import json
 
 _fernet = Fernet(settings.ENCRYPTION_KEY)
 
-DB_PATH = "/data/referral_bot.db"
+DB_PATH = settings.DATABASE_URL.replace("sqlite:///", "")
 
 async def init_db():
-    os.makedirs("/data", exist_ok=True)
-    DB_PATH = "/data/referral_bot.db"
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else ".", exist_ok=True)
+    async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -99,7 +98,7 @@ def decrypt_phone(encrypted: bytes | None) -> str:
 async def create_user(user_id: int, full_name: str, phone: str, bank: str):
     normalized_phone = normalize_phone(phone)
     phone_enc = encrypt_phone(normalized_phone)
-    async with aiosqlite.connect("/data/referral_bot.db") as db:    
+    async with aiosqlite.connect(DB_PATH) as db:    
         await db.execute(
             "INSERT INTO users (user_id, full_name, phone_enc, bank) VALUES (?, ?, ?, ?)",
             (user_id, full_name, phone_enc, bank)
@@ -109,12 +108,12 @@ async def create_user(user_id: int, full_name: str, phone: str, bank: str):
         await db.commit()
 
 async def user_exists(user_id: int) -> bool:
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
         return await cursor.fetchone() is not None
 
 async def get_user_full_data(user_id: int) -> Optional[Dict[str, Any]]:
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
             SELECT u.*, p.*, f.*
@@ -128,7 +127,7 @@ async def get_user_full_data(user_id: int) -> Optional[Dict[str, Any]]:
 
 async def get_user_by_phone(phone: str) -> Optional[Dict[str, Any]]:
     normalized_input = normalize_phone(phone)
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT user_id, phone_enc FROM users")
         async for row in cursor:
@@ -141,24 +140,24 @@ async def get_user_by_phone(phone: str) -> Optional[Dict[str, Any]]:
         return None
 
 async def update_user_field(user_id: int, field: str, value):
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         if field == "phone":
             value = encrypt_phone(value)
         await db.execute(f"UPDATE users SET {field} = ? WHERE user_id = ?", (value, user_id))
         await db.commit()
 
 async def update_progress_field(user_id: int, field: str, value):
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(f"UPDATE referral_progress SET {field} = ? WHERE user_id = ?", (value, user_id))
         await db.commit()
 
 async def update_financial_field(user_id: int, field: str, value):
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(f"UPDATE financial_data SET {field} = ? WHERE user_id = ?", (value, user_id))
         await db.commit()
 
 async def get_all_referrals_data():
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
             SELECT u.*, p.*
@@ -169,7 +168,7 @@ async def get_all_referrals_data():
         return [dict(row) for row in rows]
 
 async def get_all_referrals_for_json() -> str:
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("""
             SELECT u.*, p.*, f.*
@@ -205,7 +204,7 @@ async def get_all_referrals_for_json() -> str:
         return json.dumps(result, ensure_ascii=False, indent=2)
 
 async def get_finance_summary() -> Dict[str, int]:
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
 
         cursor = await db.execute("SELECT COUNT(*) FROM users")
         total = (await cursor.fetchone())[0]
@@ -253,7 +252,7 @@ async def get_finance_summary() -> Dict[str, int]:
 
 
 async def get_referral_link(bank: str) -> str | None:
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT url, utm_source, utm_medium, utm_campaign FROM referral_links WHERE bank = ?",
@@ -283,7 +282,7 @@ async def get_referral_link(bank: str) -> str | None:
         ))
 
 async def update_referral_link(bank: str, base_url: str, utm_source: str, utm_medium: str, utm_campaign: str):
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             INSERT OR REPLACE INTO referral_links
             (bank, url, utm_source, utm_medium, utm_campaign)
@@ -302,7 +301,7 @@ async def get_users_for_auto_reminder() -> list[dict]:
     Returns:
         list[dict]: Список словарей с ключами 'user_id', 'bank'.
     """
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
 
         seven_days_ago = (datetime.utcnow().date() - timedelta(days=7)).isoformat()
@@ -339,7 +338,7 @@ async def get_users_for_auto_reminder() -> list[dict]:
         return list(all_rows.values())  
 
 async def log_reminder_sent(user_id: int, admin_id: int):
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT INTO reminders_log (user_id, admin_id) VALUES (?, ?)",
             (user_id, admin_id)
@@ -351,7 +350,7 @@ async def get_users_needing_reminder() -> list:
 
 async def delete_user_by_id(user_id: int) -> bool:
     """Удаляет пользователя и все связанные данные по user_id."""
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM referral_progress WHERE user_id = ?", (user_id,))
         await db.execute("DELETE FROM financial_data WHERE user_id = ?", (user_id,))
         await db.execute("DELETE FROM reminders_log WHERE user_id = ?", (user_id,))
@@ -361,7 +360,7 @@ async def delete_user_by_id(user_id: int) -> bool:
 
 async def delete_user_by_phone(phone: str) -> bool:
     """Удаляет пользователя по номеру телефона (с расшифровкой)."""
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT user_id, phone_enc FROM users")
         async for row in cursor:
             try:
@@ -376,7 +375,7 @@ async def delete_user_all_data(user_id: int) -> bool:
     """
     Полностью удаляет пользователя и все связанные данные из БД.
     """
-    async with aiosqlite.connect("/data/referral_bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         # Удаляем из зависимых таблиц
         await db.execute("DELETE FROM referral_progress WHERE user_id = ?", (user_id))
         await db.execute("DELETE FROM financial_data WHERE user_id = ?", (user_id))
