@@ -26,7 +26,7 @@ from services.report_generator import (
     generate_referral_text_report_with_conditions, 
     generate_full_json_report
     )
-from services.bonus_calculator import recalculate_bonus
+from services.bonus_calculator import recalculate_all_bonuses
 from handlers.finance_handler import show_finance_report
 
 router = Router()
@@ -148,7 +148,7 @@ async def process_card_activated_date(message: types.Message, state: FSMContext)
 
 
 async def _finalize_profile_edit(obj, state: FSMContext):
-    await recalculate_bonus(obj.from_user.id)
+    await recalculate_all_bonuses(obj.from_user.id)
     msg = "✅ Данные обновлены! Бонусы пересчитаны."
     if isinstance(obj, types.Message):
         await obj.answer(msg, reply_markup=get_user_main_menu_kb())
