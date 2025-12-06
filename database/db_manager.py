@@ -10,7 +10,7 @@ import json
 
 _fernet = Fernet(settings.ENCRYPTION_KEY)
 
-DB_PATH = settings.DATABASE_URL.replace("sqlite:///", "")
+DB_PATH = "/data/referral_bot.db"
 
 async def init_db():
     os.makedirs("/data", exist_ok=True)
