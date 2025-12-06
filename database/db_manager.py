@@ -86,7 +86,8 @@ async def init_db():
 
         cursor = await db.execute("PRAGMA table_info(referral_links)")
         columns = {row[1] for row in await cursor.fetchall()}
-
+        cursor = await db.execute("PRAGMA table_info(financial_data)")
+        columns = {row[1] for row in await cursor.fetchall()}
         if "utm_source" not in columns:
             await db.execute("ALTER TABLE referral_links ADD COLUMN utm_source TEXT DEFAULT 'telegram'")
         if "utm_medium" not in columns:
