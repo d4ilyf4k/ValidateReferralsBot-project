@@ -1,0 +1,147 @@
+import json
+from database.db_manager import decrypt_phone, get_all_referrals_data
+from services.bonus_calculator import is_bonus_confirmed, calculate_your_bonus
+
+def format_optional_date(date_val):
+    if not date_val:
+        return "—"
+    if isinstance(date_val, str):
+        try:
+            year, month, day = date_val.split("-")
+            return f"{day}.{month}.{year}"
+        except:
+            return str(date_val)
+    return str(date_val)
+
+def generate_referral_json(user_data: dict) -> str:
+    try:
+        phone = decrypt_phone(user_data["phone_enc"])
+    except Exception:
+        phone = "[ошибка расшифровки]"
+
+    bank = user_data["bank"]
+    your_bonus = 500 if bank == "t-bank" else 700
+    referral_bonus = 1000 if bank == "t-bank" else 1500
+
+    card_activated = bool(user_data.get("card_activated", False))
+    purchase_made = bool(user_data.get("purchase_made", False))
+    
+    if bank == "t-bank":
+        bonus_confirmed = card_activated and purchase_made
+    else:  # alpha
+        bonus_confirmed = card_activated
+
+    report = {
+        "personal_info": {
+            "full_name": user_data["full_name"],
+            "phone": phone,
+            "bank": bank,
+        },
+        "application_status": {
+            "card_activated": card_activated,
+            "purchase_made": purchase_made
+        },
+        "financial_info": {
+            "referral_bonus_amount": referral_bonus,
+            "referral_bonus_received": bonus_confirmed,  # или отдельное поле даты
+            "your_bonus_amount": your_bonus,
+            "your_bonus_status": "confirmed" if bonus_confirmed else "pending"
+        }
+    }
+    return json.dumps(report, ensure_ascii=False, indent=2)
+
+async def generate_full_json_report() -> str:
+    referrals = await get_all_referrals_data()
+    result = []
+
+    for ref in referrals:
+        try:
+            phone = decrypt_phone(ref["phone_enc"])
+        except Exception:
+            phone = "[ошибка расшифровки]"
+
+        bank = ref["bank"]
+        your_bonus = 500 if bank == "t-bank" else 700
+        referral_bonus = 1000 if bank == "t-bank" else 1500
+
+        card_activated = bool(ref.get("card_activated", False))
+        purchase_made = bool(ref.get("purchase_made", False))
+
+        if bank == "t-bank":
+            bonus_confirmed = card_activated and purchase_made
+        else:  # alpha
+            bonus_confirmed = card_activated
+
+        result.append({
+            "personal_info": {
+                "full_name": ref["full_name"],
+                "phone": phone,
+                "bank": bank,
+            },
+            "application_status": {
+                "card_activated": card_activated,
+                "purchase_made": purchase_made
+            },
+            "financial_info": {
+                "referral_bonus_amount": referral_bonus,
+                "referral_bonus_received": bonus_confirmed,
+                "your_bonus_amount": your_bonus,
+                "your_bonus_status": "confirmed" if bonus_confirmed else "pending"
+            }
+        })
+
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+def generate_referral_text_report_with_conditions(user_data: dict) -> str:
+    """
+    Генерирует человекочитаемый отчёт с условиями бонуса и корректным статусом.
+    """
+    try:
+        phone = decrypt_phone(user_data["phone_enc"])
+    except Exception:
+        phone = "[ошибка расшифровки]"
+
+    bank = user_data["bank"]
+    bank_name = "Т-Банк" if bank == "t-bank" else "Альфа-Банк"
+
+    card_activated = bool(user_data.get("card_activated", False))
+    purchase_made = bool(user_data.get("purchase_made", False))
+
+    bonus_confirmed = is_bonus_confirmed(
+        bank=bank,
+        card_activated=card_activated,
+        purchase_made=purchase_made
+    )
+    your_bonus = calculate_your_bonus(bank)
+    your_status = "✅ Подтверждён" if bonus_confirmed else "⏳ Ожидает"
+
+    if bank == "t-bank":
+        conditions_text = (
+            "💰 <b>Ваш бонус: 500₽</b>\n\n"
+            "Чтобы бонус зачислился:\n"
+            "1️⃣ Активируйте карту\n"
+            "2️⃣ Совершите покупку на сумму <b>от 500 рублей</b>\n\n"
+            "✅ Бонус приходит в течение 5–10 дней."
+        )
+    else:  # alpha
+        conditions_text = (
+            "💰 <b>Ваш бонус: 500₽</b>\n\n"
+            "Чтобы бонус зачислился:\n"
+            "1️⃣ Получите и активируйте карту\n"
+            "2️⃣ Совершите покупку на <b>любую сумму</b>\n\n"
+            "✅ Бонус приходит в течение 3–14 дней."
+        )
+
+    status_card = "✅ Активирована" if card_activated else "❌ Не активирована"
+    status_purchase = "✅ Совершена" if purchase_made else "❌ Не совершена"
+
+    return (
+        f"📋 <b>Ваша заявка</b>\n\n"
+        f"👤 <b>ФИО:</b> {user_data['full_name']}\n"
+        f"📞 <b>Телефон:</b> <code>{phone}</code>\n"
+        f"🏦 <b>Банк:</b> {bank_name}\n\n"
+        f"🔓 <b>Активация карты:</b> {status_card}\n"
+        f"💳 <b>Первая покупка:</b> {status_purchase}\n\n"
+        f"{conditions_text}\n\n"
+        f"💎 <b>Итоговый бонус</b>: {your_bonus} руб. ({your_status})"
+    )

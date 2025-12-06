@@ -1,0 +1,52 @@
+# Конфиденциальные данные
+.env
+*.env
+
+# База данных SQLite (локальный файл)
+referral_bot.db
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE и редакторы
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Логи и временные файлы
+logs/
+*.log. e n v 
+ 
+ . e n v . l o c a l 
+ 
+ . e n v . * 
+ 
+ . e n v 
+ 
+ . e n v . l o c a l 
+ 
+ . e n v . * 
+ 
+ 
