@@ -145,8 +145,7 @@ async def get_user_banks(user_id: int) -> list[str]:
             "SELECT bank FROM user_banks WHERE user_id = ? ORDER BY selected_at",
             (user_id,)
         )
-        rows = await cursor.fetchall()
-        return [row[0] for row in rows]
+        return [row[0] for row in await cursor.fetchall()]
 
 async def get_user_full_data(user_id: int) -> Optional[Dict[str, Any]]:
     async with aiosqlite.connect(DB_PATH) as db:
