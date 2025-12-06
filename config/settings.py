@@ -4,7 +4,7 @@ import os
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = "sqlite:////data/referral_bot.db"
 
 _admin_ids_raw = os.getenv("ADMIN_IDS", "").strip()
 if _admin_ids_raw:
