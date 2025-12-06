@@ -125,7 +125,16 @@ async def generate_referral_text_report_with_conditions(user_data: dict) -> str:
     your_bonus = total_bonus
     your_status = "✅ Подтверждён" if total_bonus > 0 else "⏳ Ожидает"
 
-    if "t-bank" in banks:
+    if "t-bank" in banks and "alpha" in banks:
+        conditions_text = (
+            "💰 <b>Ваш бонус: 1000₽</b>\n"
+            "Чтобы бонус зачислился:\n"
+            "• Т-Банк: активация + покупка от 500₽\n"
+            "• Альфа-Банк: активация + любая покупка\n\n"
+            "✅ Бонусы приходят в течение 3–14 дней."
+        )
+
+    elif "t-bank" in banks:
         conditions_text = (
             "💰 <b>Ваш бонус: 500₽</b>\n\n"
             "Чтобы бонус зачислился:\n"
@@ -133,7 +142,7 @@ async def generate_referral_text_report_with_conditions(user_data: dict) -> str:
             "2️⃣ Совершите покупку на сумму <b>от 500 рублей</b>\n\n"
             "✅ Бонус приходит в течение 5–10 дней."
         )
-    elif "alpha" in banks:
+    else:
         conditions_text = (
             "💰 <b>Ваш бонус: 500₽</b>\n\n"
             "Чтобы бонус зачислился:\n"
@@ -141,11 +150,9 @@ async def generate_referral_text_report_with_conditions(user_data: dict) -> str:
             "2️⃣ Совершите покупку на <b>любую сумму</b>\n\n"
             "✅ Бонус приходит в течение 3–14 дней."
         )
-    else:
-        conditions_text = "ℹ️ Условия бонуса будут показаны после выбора банка."
 
-    status_card = "✅ Активирована" if card_activated else "❌ Не активирована"
-    status_purchase = "✅ Совершена" if purchase_made else "❌ Не совершена"
+    status_card = "✅ Активирована" if user_data.get("card_activated") else "❌ Не активирована"
+    status_purchase = "✅ Совершена" if user_data.get("purchase_made") else "❌ Не совершена"
 
     return (
         f"📋 <b>Ваша заявка</b>\n\n"
