@@ -30,7 +30,7 @@ async def init_db():
                 user_id INTEGER NOT NULL,
                 bank TEXT NOT NULL CHECK (bank IN ('t-bank', 'alpha')),
                 selected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, bank)  -- Запрещаем дубли (1 банк = 1 запись)
+                UNIQUE(user_id, bank)
             )
         """)
         await db.execute('''
