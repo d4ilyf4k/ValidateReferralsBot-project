@@ -13,7 +13,6 @@ _fernet = Fernet(settings.ENCRYPTION_KEY)
 DB_PATH = settings.DATABASE_URL.replace("sqlite:///", "")
 
 async def init_db():
-    os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else ".", exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
