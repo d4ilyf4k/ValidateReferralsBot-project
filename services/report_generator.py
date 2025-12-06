@@ -92,30 +92,40 @@ async def generate_full_json_report() -> str:
 
     return json.dumps(result, ensure_ascii=False, indent=2)
 
-def generate_referral_text_report_with_conditions(user_data: dict) -> str:
-    """
-    Генерирует человекочитаемый отчёт с условиями бонуса и корректным статусом.
-    """
+async def generate_referral_text_report_with_conditions(user_data: dict) -> str:
+
     try:
         phone = decrypt_phone(user_data["phone_enc"])
     except Exception:
         phone = "[ошибка расшифровки]"
 
-    bank = user_data["bank"]
-    bank_name = "Т-Банк" if bank == "t-bank" else "Альфа-Банк"
+    from database.db_manager import get_user_banks
+    banks = await get_user_banks(user_data["user_id"])
+    if not banks:
+        banks = [user_data.get("bank", "t-bank")]  # fallback для старых пользователей
+
+    bonus_lines = []
+    total_bonus = 0
+
+    for bank in banks:
+        bank_name = "Т-Банк" if bank == "t-bank" else "Альфа-Банк"
+        card_activated = bool(user_data.get("card_activated", False))
+        purchase_made = bool(user_data.get("purchase_made", False))
+        confirmed = is_bonus_confirmed(bank, card_activated, purchase_made)
+        bonus = calculate_your_bonus(bank)
+        status = "✅ Подтверждён" if confirmed else "⏳ Ожидает"
+        bonus_lines.append(f"• {bank_name}: {bonus} ₽ ({status})")
+        if confirmed:
+            total_bonus += bonus
+
+    bank_display = ", ".join(["Т-Банк" if b == "t-bank" else "Альфа-Банк" for b in banks])
 
     card_activated = bool(user_data.get("card_activated", False))
     purchase_made = bool(user_data.get("purchase_made", False))
+    your_bonus = total_bonus
+    your_status = "✅ Подтверждён" if total_bonus > 0 else "⏳ Ожидает"
 
-    bonus_confirmed = is_bonus_confirmed(
-        bank=bank,
-        card_activated=card_activated,
-        purchase_made=purchase_made
-    )
-    your_bonus = calculate_your_bonus(bank)
-    your_status = "✅ Подтверждён" if bonus_confirmed else "⏳ Ожидает"
-
-    if bank == "t-bank":
+    if "t-bank" in banks:
         conditions_text = (
             "💰 <b>Ваш бонус: 500₽</b>\n\n"
             "Чтобы бонус зачислился:\n"
@@ -123,7 +133,7 @@ def generate_referral_text_report_with_conditions(user_data: dict) -> str:
             "2️⃣ Совершите покупку на сумму <b>от 500 рублей</b>\n\n"
             "✅ Бонус приходит в течение 5–10 дней."
         )
-    else:  # alpha
+    elif "alpha" in banks:
         conditions_text = (
             "💰 <b>Ваш бонус: 500₽</b>\n\n"
             "Чтобы бонус зачислился:\n"
@@ -131,6 +141,8 @@ def generate_referral_text_report_with_conditions(user_data: dict) -> str:
             "2️⃣ Совершите покупку на <b>любую сумму</b>\n\n"
             "✅ Бонус приходит в течение 3–14 дней."
         )
+    else:
+        conditions_text = "ℹ️ Условия бонуса будут показаны после выбора банка."
 
     status_card = "✅ Активирована" if card_activated else "❌ Не активирована"
     status_purchase = "✅ Совершена" if purchase_made else "❌ Не совершена"
@@ -139,7 +151,7 @@ def generate_referral_text_report_with_conditions(user_data: dict) -> str:
         f"📋 <b>Ваша заявка</b>\n\n"
         f"👤 <b>ФИО:</b> {user_data['full_name']}\n"
         f"📞 <b>Телефон:</b> <code>{phone}</code>\n"
-        f"🏦 <b>Банк:</b> {bank_name}\n\n"
+        f"🏦 <b>Банк:</b> {bank_display}\n\n"
         f"🔓 <b>Активация карты:</b> {status_card}\n"
         f"💳 <b>Первая покупка:</b> {status_purchase}\n\n"
         f"{conditions_text}\n\n"

@@ -24,6 +24,15 @@ async def init_db():
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_banks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                bank TEXT NOT NULL CHECK (bank IN ('t-bank', 'alpha')),
+                selected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, bank)  -- Запрещаем дубли (1 банк = 1 запись)
+            )
+        """)
         await db.execute('''
             CREATE TABLE IF NOT EXISTS referral_progress (
                 user_id INTEGER PRIMARY KEY,
@@ -50,13 +59,16 @@ async def init_db():
         await db.execute('''
             CREATE TABLE IF NOT EXISTS financial_data (
                 user_id INTEGER PRIMARY KEY,
-                referral_bonus_amount INTEGER,
-                referral_bonus_date TEXT,
-                your_bonus_amount INTEGER,
-                your_bonus_status TEXT DEFAULT 'pending',
-                FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                total_referral_bonus INTEGER DEFAULT 0,
+                total_your_bonus INTEGER DEFAULT 0,
+                total_bonus_status TEXT DEFAULT 'pending',
+                bonus_details TEXT,
+                referral_bonus_amount INTEGER DEFAULT 0,
+                your_bonus_amount INTEGER DEFAULT 0,
+                your_bonus_status TEXT DEFAULT 'pending'
             )
         ''')
+
         await db.execute('''
             CREATE TABLE IF NOT EXISTS reminders_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +93,14 @@ async def init_db():
             await db.execute("ALTER TABLE referral_links ADD COLUMN utm_medium TEXT DEFAULT 'referral'")
         if "utm_campaign" not in columns:
             await db.execute("ALTER TABLE referral_links ADD COLUMN utm_campaign TEXT DEFAULT 'default'")
-
+        if "total_referral_bonus" not in columns:
+            await db.execute("ALTER TABLE financial_data ADD COLUMN total_referral_bonus INTEGER DEFAULT 0")
+        if "total_your_bonus" not in columns:
+            await db.execute("ALTER TABLE financial_data ADD COLUMN total_your_bonus INTEGER DEFAULT 0")
+        if "total_bonus_status" not in columns:
+            await db.execute("ALTER TABLE financial_data ADD COLUMN total_bonus_status TEXT DEFAULT 'pending'")
+        if "bonus_details" not in columns:
+            await db.execute("ALTER TABLE financial_data ADD COLUMN bonus_details TEXT")
         await db.commit()
 
 def encrypt_phone(phone: str) -> bytes:
@@ -111,6 +130,23 @@ async def user_exists(user_id: int) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
         return await cursor.fetchone() is not None
+
+async def add_user_bank(user_id: int, bank: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO user_banks (user_id, bank) VALUES (?, ?)",
+            (user_id, bank)
+        )
+        await db.commit()
+
+async def get_user_banks(user_id: int) -> list[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT bank FROM user_banks WHERE user_id = ? ORDER BY selected_at",
+            (user_id,)
+        )
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
 
 async def get_user_full_data(user_id: int) -> Optional[Dict[str, Any]]:
     async with aiosqlite.connect(DB_PATH) as db:
@@ -150,6 +186,13 @@ async def update_progress_field(user_id: int, field: str, value):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(f"UPDATE referral_progress SET {field} = ? WHERE user_id = ?", (value, user_id))
         await db.commit()
+
+async def get_user_financial_data(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM financial_data WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
 
 async def update_financial_field(user_id: int, field: str, value):
     async with aiosqlite.connect(DB_PATH) as db:

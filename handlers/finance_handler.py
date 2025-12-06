@@ -12,7 +12,7 @@ async def show_finance_report(message: types.Message):
         await message.answer("Сначала завершите регистрацию.")
         return
 
-    report = generate_referral_text_report_with_conditions(user_data)
+    report = await generate_referral_text_report_with_conditions(user_data)
     await message.answer(report, parse_mode="HTML")
 
 @router.callback_query(F.data == "📤 Экспорт в JSON")
