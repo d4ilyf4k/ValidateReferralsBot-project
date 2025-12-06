@@ -1,7 +1,7 @@
 from aiogram import Router, F, types
 from database.db_manager import get_referral_link, add_user_bank
 from utils.keyboards import get_bank_kb, get_user_main_menu_kb
-from bank_handler import recalculate_all_bonuses
+from services.bonus_calculator import recalculate_all_bonuses
 
 router = Router()
 
