@@ -1,5 +1,5 @@
 from aiogram import Router, F, types
-from database.db_manager import get_referral_link
+from database.db_manager import get_referral_link, update_user_field
 from utils.keyboards import get_bank_kb, get_user_main_menu_kb
 
 router = Router()
@@ -14,6 +14,8 @@ async def choose_bank(message: types.Message):
 @router.message(F.text.in_(["🏦Т-Банк", "🏦Альфа-Банк"]))
 async def send_bank_info_and_link(message: types.Message):
     bank_key = "t-bank" if message.text == "🏦Т-Банк" else "alpha"
+    
+    await update_user_field(message.from_user.id, "bank", bank_key)
 
     if bank_key == "t-bank":
         desc = (
