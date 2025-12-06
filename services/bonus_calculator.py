@@ -49,10 +49,6 @@ def calculate_your_bonus(bank: str) -> int:
     return 500 if bank == "t-bank" else 500
 
 async def recalculate_bonus(user_id: int) -> None:
-    """
-    Пересчитывает статус и сумму бонуса для реферера по user_id.
-    Обновляет данные в financial_data.
-    """
     user_data = await get_user_full_data(user_id)
     if not user_data:
         return  # Пользователь не найден
@@ -65,8 +61,13 @@ async def recalculate_bonus(user_id: int) -> None:
     bonus_confirmed = is_bonus_confirmed(bank, card_activated, purchase_made)
     bonus_status = "confirmed" if bonus_confirmed else "pending"
 
+    # Сохраняем ОБЕ суммы: и для реферала, и для вас
     await update_financial_field(user_id, "your_bonus_amount", bonus_amount)
     await update_financial_field(user_id, "your_bonus_status", bonus_status)
+
+    # (Опционально) Обновите и бонус реферала
+    referral_bonus = get_referral_bonus(bank)
+    await update_financial_field(user_id, "referral_bonus_amount", referral_bonus)
 
 def get_referral_bonus(bank: str) -> int:
     """
