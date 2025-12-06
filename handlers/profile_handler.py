@@ -2,7 +2,7 @@ from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from database.db_manager import get_user_full_data, update_user_field, update_progress_field
-from services.bonus_calculator import recalculate_bonus
+from services.bonus_calculator import recalculate_all_bonuses
 from config import settings
 from utils.keyboards import (
     get_edit_profile_kb,
@@ -104,7 +104,7 @@ async def process_card_last4(message: types.Message, state: FSMContext):
         await message.answer("❌ Неверный формат. Введите ровно 4 цифры (например: 1234).")
         return
     await update_progress_field(message.from_user.id, "card_last4", text)
-    await recalculate_bonus(message.from_user.id)
+    await recalculate_all_bonuses(message.from_user.id)
     await message.answer("✅ Последние 4 цифры обновлены!", reply_markup=get_user_main_menu_kb())
     await state.clear()
 
