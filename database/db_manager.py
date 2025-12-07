@@ -334,7 +334,6 @@ async def get_all_referrals_data(include_financial: bool = True):
                     COALESCE(f.total_your_bonus, 0) as total_your_bonus,
                     COALESCE(f.total_bonus_status, 'pending') as total_bonus_status,
                     f.bonus_details,
-                    f.updated_at as last_financial_update
                 FROM users u
                 LEFT JOIN referral_progress p ON u.user_id = p.user_id
                 LEFT JOIN financial_data f ON u.user_id = f.user_id
