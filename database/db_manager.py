@@ -530,14 +530,20 @@ async def get_users_needing_reminder() -> list:
     return []
 
 async def delete_user_by_id(user_id: int) -> bool:
-    """Удаляет пользователя и все связанные данные по user_id."""
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM referral_progress WHERE user_id = ?", (user_id,))
-        await db.execute("DELETE FROM financial_data WHERE user_id = ?", (user_id,))
-        await db.execute("DELETE FROM reminders_log WHERE user_id = ?", (user_id,))
-        cursor = await db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
-        await db.commit()
-        return cursor.rowcount > 0
+        try:
+            await db.execute("DELETE FROM referral_progress WHERE user_id = ?", (user_id,))
+            await db.execute("DELETE FROM financial_data WHERE user_id = ?", (user_id,))
+            await db.execute("DELETE FROM reminders_log WHERE user_id = ?", (user_id,))
+            await db.execute("DELETE FROM user_banks WHERE user_id = ?", (user_id,))
+            cursor = await db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+            await db.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"❌ Ошибка при удалении пользователя {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
 async def delete_user_by_phone(phone: str) -> bool:
     """Удаляет пользователя по номеру телефона (с расшифровкой)."""
@@ -553,15 +559,17 @@ async def delete_user_by_phone(phone: str) -> bool:
         return False
     
 async def delete_user_all_data(user_id: int) -> bool:
-    """
-    Полностью удаляет пользователя и все связанные данные из БД.
-    """
     async with aiosqlite.connect(DB_PATH) as db:
-        # Удаляем из зависимых таблиц
-        await db.execute("DELETE FROM referral_progress WHERE user_id = ?", (user_id))
-        await db.execute("DELETE FROM financial_data WHERE user_id = ?", (user_id))
-        await db.execute("DELETE FROM reminders_log WHERE user_id = ?", (user_id))
-        # Удаляем из основной таблицы
-        cursor = await db.execute("DELETE FROM users WHERE user_id = ?", (user_id))
-        await db.commit()
-        return cursor.rowcount > 0
+        try:
+            await db.execute("DELETE FROM referral_progress WHERE user_id = ?", (user_id,))
+            await db.execute("DELETE FROM financial_data WHERE user_id = ?", (user_id,))
+            await db.execute("DELETE FROM reminders_log WHERE user_id = ?", (user_id,))
+            await db.execute("DELETE FROM user_banks WHERE user_id = ?", (user_id,))
+            cursor = await db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+            await db.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"❌ Ошибка при удалении данных пользователя {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
