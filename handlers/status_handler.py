@@ -1,14 +1,12 @@
 from aiogram import Router, F, types
 from aiogram.filters import Command
-from database.db_manager import get_user_full_data
+from database.db_manager import get_user_full_data, get_user_banks
 from services.bonus_calculator import is_bonus_confirmed, get_referral_bonus
 
 router = Router()
 
 @router.message(F.text == "📊 Статус заявки")
 async def user_status(message: types.Message):
-    from database.db_manager import get_user_banks, get_user_full_data
-    from services.bonus_calculator import get_referral_bonus, is_bonus_confirmed
     user_id = message.from_user.id
     user_banks = await get_user_banks(user_id)
     if not user_banks:
