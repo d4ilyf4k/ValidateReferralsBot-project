@@ -49,19 +49,18 @@ async def recalculate_all_bonuses(user_id: int):
         card_activated = bool(user_data.get("card_activated"))
         purchase_made = bool(user_data.get("purchase_made"))
 
-        # ПРАВИЛЬНО получаем бонусы
-        referral_bonus = get_referral_bonus(bank)      # бонус реферала = 500
-        your_bonus = calculate_your_bonus(bank)        # ваш бонус = 3000/2000
+        referral_bonus = get_referral_bonus(bank)
+        your_bonus = calculate_your_bonus(bank)
         confirmed = is_bonus_confirmed(bank, card_activated, purchase_made)
 
         bonus_details[bank] = {
-            "referral_bonus": referral_bonus,  # 500
-            "your_bonus": your_bonus,          # 3000/2000
+            "referral_bonus": referral_bonus,
+            "your_bonus": your_bonus,        
             "confirmed": confirmed
         }
 
-        total_referral_bonus += referral_bonus  # суммируем бонусы реферала
-        total_your_bonus += your_bonus          # суммируем ваши бонусы
+        total_referral_bonus += referral_bonus
+        total_your_bonus += your_bonus        
         
         if not confirmed:
             all_confirmed = False
