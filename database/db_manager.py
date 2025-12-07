@@ -212,39 +212,87 @@ async def get_user_financial_data(user_id: int):
         return dict(row) if row else None
 
 async def update_financial_field(user_id: int, field: str, value):
-    """Безопасное обновление поля financial_data."""
-    
-    FIELD_MAPPING = {
-        'total_referral_bonus': "total_referral_bonus = ?",
-        'total_your_bonus': "total_your_bonus = ?",
-        'total_bonus_status': "total_bonus_status = ?",
-        'bonus_details': "bonus_details = ?",
-        
-        'referral_bonus_amount': "total_referral_bonus = ?",
-        'your_bonus_amount': "total_your_bonus = ?",
-        
-        'amount': "amount = ?",
-        'status': "status = ?",
-        'bank': "bank = ?",
-        'payment_method': "payment_method = ?",
-        'transaction_id': "transaction_id = ?",
+    field = field.strip()
+    FIELD_CONFIG = {
+        'total_referral_bonus': {
+            'sql': "total_referral_bonus = ?",
+            'type': int,
+            'default': 0
+        },
+        'total_your_bonus': {
+            'sql': "total_your_bonus = ?",
+            'type': int,
+            'default': 0
+        },
+        'total_bonus_status': {
+            'sql': "total_bonus_status = ?",
+            'type': str,
+            'default': 'pending',
+            'allowed_values': ['pending', 'processing', 'paid', 'cancelled']
+        },
+        'bonus_details': {
+            'sql': "bonus_details = ?",
+            'type': str,
+            'default': None
+        },
+        'referral_bonus_amount': {
+            'sql': "total_referral_bonus = ?",
+            'type': int,
+            'default': 0
+        },
+        'your_bonus_amount': {
+            'sql': "total_your_bonus = ?",
+            'type': int,
+            'default': 0
+        },
+        'amount': {
+            'sql': "amount = ?",
+            'type': (int, float),
+            'default': 0
+        },
+        'status': {
+            'sql': "status = ?",
+            'type': str,
+            'default': 'active'
+        },
+        'updated_at': {
+            'sql': "updated_at = datetime('now')",  # Автоматически
+            'type': None,
+            'auto': True
+        }
     }
     
-    if field not in FIELD_MAPPING:
-        allowed_fields = ', '.join(sorted(FIELD_MAPPING.keys()))
-        raise ValueError(
-            f"Поле '{field}' не разрешено. "
-            f"Разрешённые поля: {allowed_fields}"
-        )
+    if field not in FIELD_CONFIG:
+        allowed = ', '.join(FIELD_CONFIG.keys())
+        raise ValueError(f"Поле '{field}' не разрешено. Разрешены: {allowed}")
+    
+    config = FIELD_CONFIG[field]
+    
+    if config.get('type') and not config.get('auto', False):
+        if not isinstance(value, config['type']):
+            expected = config['type'].__name__ if hasattr(config['type'], '__name__') else str(config['type'])
+            actual = type(value).__name__
+            raise TypeError(f"Поле '{field}' ожидает {expected}, получен {actual}")
+        
+    if 'allowed_values' in config and value not in config['allowed_values']:
+        allowed = ', '.join(config['allowed_values'])
+        raise ValueError(f"Поле '{field}' допускает значения: {allowed}")    
     
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            f"UPDATE financial_data SET {FIELD_MAPPING[field]} WHERE user_id = ?",
-            (value, user_id)
-        )
+        if config.get('auto', False):
+            # Автоматическое поле (например, updated_at)
+            await db.execute(
+                f"UPDATE financial_data SET {config['sql']} WHERE user_id = ?",
+                (user_id,)  # только user_id
+            )
+        else:
+            # Обычное поле
+            await db.execute(
+                f"UPDATE financial_data SET {config['sql']} WHERE user_id = ?",
+                (value, user_id)  # value И user_id
+            )
         await db.commit()
-        print(f"✅ Обновлено поле '{field}' = {value} для user_id={user_id}")
-
+        return True
 
 async def get_all_referrals_data():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -322,7 +370,7 @@ async def get_finance_summary() -> Dict[str, int]:
         cursor = await db.execute("SELECT COUNT(*) FROM financial_data WHERE your_bonus_status = 'pending'")
         pending_count = (await cursor.fetchone())[0]
 
-        cursor = await db.execute("SELECT COALESCE(SUM(total_referral_bonus ), 0) FROM financial_data WHERE referral_bonus_date IS NOT NULL")
+        cursor = await db.execute("SELECT COALESCE(SUM(total_referral_bonus), 0) FROM financial_data WHERE referral_bonus_date IS NOT NULL")
         total_referral_paid = (await cursor.fetchone())[0]
 
         return {
