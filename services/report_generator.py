@@ -52,33 +52,32 @@ def generate_referral_json(user_data: dict) -> str:
 
 async def generate_full_json_report() -> str:
     from datetime import datetime
-    
     try:
         raw_data = await get_all_referrals_data(include_financial=True)
         
+        if not raw_data:
+            return json.dumps({
+                "generated_at": datetime.now().isoformat(),
+                "total_users": 0,
+                "users": []
+            }, ensure_ascii=False, indent=2)
+        
         processed_users = []
-        for user in raw_data:
-            user_dict = dict(user)
+        for row in raw_data:
+            user = dict(row)
             
-            if 'id' not in user_dict and 'user_id' in user_dict:
-                user_dict['id'] = user_dict['user_id']
+            if 'id' not in user:
+                user['id'] = user.get('user_id')
             
-            phone_enc = user_dict.get('phone_enc')
-            if phone_enc:
-                user_dict['phone'] = decrypt_phone(phone_enc)
+            if 'phone_enc' in user and user['phone_enc']:
+                user['phone'] = decrypt_phone(user['phone_enc'])
+                del user['phone_enc']
             else:
-                user_dict['phone'] = None
+                user['phone'] = None
+                if 'phone_enc' in user:
+                    del user['phone_enc']
             
-            if 'phone_enc' in user_dict:
-                del user_dict['phone_enc']
-            
-            for key, value in user_dict.items():
-                if isinstance(value, bytes):
-                    user_dict[key] = str(value)
-                elif isinstance(value, datetime):
-                    user_dict[key] = value.isoformat()
-            
-            processed_users.append(user_dict)
+            processed_users.append(user)
         
         result = {
             "generated_at": datetime.now().isoformat(),

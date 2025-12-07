@@ -326,7 +326,7 @@ async def get_all_referrals_data(include_financial: bool = True):
         query = """
             SELECT 
                 u.user_id,
-                u.user_id as id,  # ДОБАВЛЯЕМ поле id для совместимости
+                u.user_id as id,
                 u.full_name,
                 u.phone_enc,
                 u.bank,
