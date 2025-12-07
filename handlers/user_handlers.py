@@ -1,9 +1,67 @@
 from aiogram import Router, F, types
-from database.db_manager import get_user_full_data, delete_user_all_data
+from database.db_manager import get_user_full_data, delete_user_all_data, add_user_bank, get_user_banks
 from services.report_generator import generate_referral_text_report_with_conditions
 from utils.keyboards import get_start_kb
 
 router = Router()
+
+@router.message(F.text == "🏦 Добавить банк")
+async def add_bank_handler(message: types.Message):
+    """Добавление второго банка пользователю."""
+    user_id = message.from_user.id
+    
+    # Проверяем, какие банки уже выбраны
+    user_banks = await get_user_banks(user_id)
+    
+    if len(user_banks) >= 2:
+        await message.answer("Вы уже выбрали оба доступных банка.")
+        return
+    
+    # Показываем доступные банки
+    available_banks = []
+    if "t-bank" not in user_banks:
+        available_banks.append("Т-Банк")
+    if "alpha" not in user_banks:
+        available_banks.append("Альфа-Банк")
+    
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(
+                text="Т-Банк", 
+                callback_data="select_bank_tbank"
+            ) if "Т-Банк" in available_banks else None,
+            types.InlineKeyboardButton(
+                text="Альфа-Банк", 
+                callback_data="select_bank_alpha"
+            ) if "Альфа-Банк" in available_banks else None
+        ]
+    ])
+    
+    await message.answer(
+        "Выберите дополнительный банк:",
+        reply_markup=keyboard
+    )
+
+@router.callback_query(F.data.startswith("select_bank_"))
+async def select_bank_callback(callback: types.CallbackQuery):
+    """Обработчик выбора банка."""
+    bank_map = {
+        "select_bank_tbank": "t-bank",
+        "select_bank_alpha": "alpha"
+    }
+    bank = bank_map.get(callback.data)
+    if not bank:
+        await callback.answer("Неизвестный банк")
+        return
+    user_id = callback.from_user.id
+    await add_user_bank(user_id, bank)
+    from services.bonus_calculator import recalculate_all_bonuses
+    await recalculate_all_bonuses(user_id)
+    await callback.answer(f"Банк {bank} добавлен!")
+    await callback.message.answer(
+        f"✅ Банк {bank} успешно добавлен!\n\n"
+        "Теперь вы можете отслеживать прогресс по обоим банкам."
+    )
 
 @router.message(F.text == "💰 Финансовый отчёт")
 async def user_finance_report(message: types.Message):

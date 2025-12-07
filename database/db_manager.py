@@ -323,13 +323,19 @@ async def get_all_referrals_data(include_financial: bool = True):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         
+        # Собираем все банки пользователя через GROUP_CONCAT
         query = """
             SELECT 
                 u.user_id,
                 u.user_id as id,
                 u.full_name,
                 u.phone_enc,
-                u.bank,
+                u.bank as primary_bank,
+                (
+                    SELECT GROUP_CONCAT(bank) 
+                    FROM user_banks ub 
+                    WHERE ub.user_id = u.user_id
+                ) as all_banks,
                 u.created_at,
                 COALESCE(p.card_received, 0) as card_received,
                 COALESCE(p.card_activated, 0) as card_activated,
@@ -354,16 +360,26 @@ async def get_all_referrals_data(include_financial: bool = True):
         
         query += " ORDER BY u.created_at DESC"
         
-        print(f"🔍 Выполняем запрос:\n{query[:200]}...")
-        
         cursor = await db.execute(query)
         rows = await cursor.fetchall()
         
-        print(f"✅ Найдено записей: {len(rows)}")
-        if rows:
-            print(f"📊 Первая запись ключи: {list(dict(rows[0]).keys())}")
+        result = []
+        for row in rows:
+            item = dict(row)
+            
+            all_banks = item.get('all_banks', '')
+            if all_banks:
+                banks_list = all_banks.split(',')
+                item['banks'] = banks_list
+            else:
+                item['banks'] = [item.get('primary_bank')] if item.get('primary_bank') else []
+            
+            item.pop('primary_bank', None)
+            item.pop('all_banks', None)
+            
+            result.append(item)
         
-        return [dict(row) for row in rows]
+        return result
     
 async def get_finance_summary() -> Dict[str, int]:
     async with aiosqlite.connect(DB_PATH) as db:

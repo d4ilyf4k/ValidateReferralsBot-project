@@ -51,7 +51,9 @@ def generate_referral_json(user_data: dict) -> str:
     return json.dumps(report, ensure_ascii=False, indent=2)
 
 async def generate_full_json_report() -> str:
+    """Генерирует полный JSON отчет."""
     from datetime import datetime
+    
     try:
         raw_data = await get_all_referrals_data(include_financial=True)
         
@@ -66,8 +68,14 @@ async def generate_full_json_report() -> str:
         for row in raw_data:
             user = dict(row)
             
-            if 'id' not in user:
-                user['id'] = user.get('user_id')
+            banks = user.get('banks', [])
+            if isinstance(banks, str):
+                banks = banks.split(',') if banks else []
+            
+            user['banks'] = banks
+            
+            if 'bank' not in user and banks:
+                user['bank'] = banks[0] if banks else None
             
             if 'phone_enc' in user and user['phone_enc']:
                 user['phone'] = decrypt_phone(user['phone_enc'])
@@ -76,6 +84,13 @@ async def generate_full_json_report() -> str:
                 user['phone'] = None
                 if 'phone_enc' in user:
                     del user['phone_enc']
+            
+            bonus_details = user.get('bonus_details')
+            if bonus_details and isinstance(bonus_details, str):
+                try:
+                    user['bonus_details'] = json.loads(bonus_details)
+                except json.JSONDecodeError:
+                    pass
             
             processed_users.append(user)
         
