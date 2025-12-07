@@ -4,9 +4,8 @@ from config import settings
 from cryptography.fernet import Fernet
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
-from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from utils.validation import normalize_phone
-import json
 
 _fernet = Fernet(settings.ENCRYPTION_KEY)
 
@@ -85,22 +84,27 @@ async def init_db():
         ''')
 
         cursor = await db.execute("PRAGMA table_info(referral_links)")
-        columns = {row[1] for row in await cursor.fetchall()}
+        referral_columns = {row[1] for row in await cursor.fetchall()}
         cursor = await db.execute("PRAGMA table_info(financial_data)")
-        columns = {row[1] for row in await cursor.fetchall()}
-        if "utm_source" not in columns:
+        financial_columns = {row[1] for row in await cursor.fetchall()}
+        if "bank" not in referral_columns:
+            await db.execute("ALTER TABLE referral_links ADD COLUMN bank TEXT")
+        if "utm_source" not in referral_columns:
             await db.execute("ALTER TABLE referral_links ADD COLUMN utm_source TEXT DEFAULT 'telegram'")
-        if "utm_medium" not in columns:
+        if "utm_medium" not in referral_columns:
             await db.execute("ALTER TABLE referral_links ADD COLUMN utm_medium TEXT DEFAULT 'referral'")
-        if "utm_campaign" not in columns:
+        if "utm_campaign" not in referral_columns:
             await db.execute("ALTER TABLE referral_links ADD COLUMN utm_campaign TEXT DEFAULT 'default'")
-        if "total_referral_bonus" not in columns:
+
+        if "user_id" not in financial_columns:
+            await db.execute("ALTER TABLE financial_data ADD COLUMN user_id INTEGER UNIQUE")
+        if "total_referral_bonus" not in financial_columns:
             await db.execute("ALTER TABLE financial_data ADD COLUMN total_referral_bonus INTEGER DEFAULT 0")
-        if "total_your_bonus" not in columns:
+        if "total_your_bonus" not in financial_columns:
             await db.execute("ALTER TABLE financial_data ADD COLUMN total_your_bonus INTEGER DEFAULT 0")
-        if "total_bonus_status" not in columns:
+        if "total_bonus_status" not in financial_columns:
             await db.execute("ALTER TABLE financial_data ADD COLUMN total_bonus_status TEXT DEFAULT 'pending'")
-        if "bonus_details" not in columns:
+        if "bonus_details" not in financial_columns:
             await db.execute("ALTER TABLE financial_data ADD COLUMN bonus_details TEXT")
         await db.commit()
 
@@ -190,13 +194,39 @@ async def update_progress_field(user_id: int, field: str, value):
 async def get_user_financial_data(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM financial_data WHERE user_id = ?", (user_id,))
+        cursor = await db.execute("""
+            SELECT 
+                id,
+                user_id,
+                COALESCE(amount, 0) as amount,
+                COALESCE(total_referral_bonus, 0) as total_referral_bonus,
+                COALESCE(total_your_bonus, 0) as total_your_bonus,
+                COALESCE(total_bonus_status, 'pending') as total_bonus_status,
+                bonus_details,
+                created_at,
+                updated_at
+            FROM financial_data 
+            WHERE user_id = ?
+        """, (user_id,))
         row = await cursor.fetchone()
         return dict(row) if row else None
 
 async def update_financial_field(user_id: int, field: str, value):
+    FIELD_MAPPING = {
+        'total_referral_bonus': "total_referral_bonus = ?",
+        'total_your_bonus': "total_your_bonus = ?",
+        'total_bonus_status': "total_bonus_status = ?",
+        'bonus_details': "bonus_details = ?",
+    }
+    
+    if field not in FIELD_MAPPING:
+        raise ValueError(f"Поле '{field}' не разрешено")
+    
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(f"UPDATE financial_data SET {field} = ? WHERE user_id = ?", (value, user_id))
+        await db.execute(
+            f"UPDATE financial_data SET {FIELD_MAPPING[field]} WHERE user_id = ?",
+            (value, user_id)
+        )
         await db.commit()
 
 async def get_all_referrals_data():
@@ -210,41 +240,40 @@ async def get_all_referrals_data():
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
-async def get_all_referrals_for_json() -> str:
+async def get_all_referrals_data(include_financial: bool = True):
+    """Получаем данные всех рефералов."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute("""
-            SELECT u.*, p.*, f.*
-            FROM users u
-            JOIN referral_progress p ON u.user_id = p.user_id
-            JOIN financial_data f ON u.user_id = f.user_id
-        """)
+        
+        if include_financial:
+            cursor = await db.execute("""
+                SELECT 
+                    u.*,
+                    COALESCE(p.referrals_count, 0) as referrals_count,
+                    COALESCE(p.successful_referrals, 0) as successful_referrals,
+                    COALESCE(f.total_referral_bonus, 0) as total_referral_bonus,
+                    COALESCE(f.total_your_bonus, 0) as total_your_bonus,
+                    COALESCE(f.total_bonus_status, 'pending') as total_bonus_status,
+                    f.bonus_details,
+                    f.updated_at as last_financial_update
+                FROM users u
+                LEFT JOIN referral_progress p ON u.user_id = p.user_id
+                LEFT JOIN financial_data f ON u.user_id = f.user_id
+                ORDER BY u.created_at DESC
+            """)
+        else:
+            cursor = await db.execute("""
+                SELECT 
+                    u.*,
+                    COALESCE(p.referrals_count, 0) as referrals_count,
+                    COALESCE(p.successful_referrals, 0) as successful_referrals
+                FROM users u
+                LEFT JOIN referral_progress p ON u.user_id = p.user_id
+                ORDER BY u.created_at DESC
+            """)
+        
         rows = await cursor.fetchall()
-        result = []
-        for row in rows:
-            try:
-                phone = decrypt_phone(row["phone_enc"])
-            except:
-                phone = "[ошибка]"
-            result.append({
-                "personal_info": {
-                    "full_name": row["full_name"],
-                    "phone": phone,
-                    "bank": row["bank"],
-                },
-                "application_status": {
-                    "card_activated": bool(row["card_activated"]),
-                    "purchase_made": bool(row["purchase_made"])
-                },
-                "financial_info": {
-                    "referral_bonus_received": bool(row["referral_bonus_date"]),
-                    "referral_bonus_amount": row["referral_bonus_amount"],
-                    "referral_bonus_date": row["referral_bonus_date"],
-                    "your_bonus_amount": row["your_bonus_amount"],
-                    "your_bonus_status": row["your_bonus_status"]
-                }
-            })
-        return json.dumps(result, ensure_ascii=False, indent=2)
+        return [dict(row) for row in rows]
 
 async def get_finance_summary() -> Dict[str, int]:
     async with aiosqlite.connect(DB_PATH) as db:
@@ -293,12 +322,29 @@ async def get_finance_summary() -> Dict[str, int]:
             "pending_count": pending_count,
         }
 
+async def add_referral_link(bank: str, url: str, utm_source="telegram", utm_medium="referral"):
+    """Добавляет реферальную ссылку для банка."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT OR REPLACE INTO referral_links 
+            (bank, url, utm_source, utm_medium, utm_campaign) 
+            VALUES (?, ?, ?, ?, 'default')
+        """, (bank, url, utm_source, utm_medium))
+        await db.commit()
 
 async def get_referral_link(bank: str) -> str | None:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT url, utm_source, utm_medium, utm_campaign FROM referral_links WHERE bank = ?",
+            """
+            SELECT 
+                url, 
+                COALESCE(utm_source, 'telegram') as utm_source,
+                COALESCE(utm_medium, 'referral') as utm_medium,
+                COALESCE(utm_campaign, 'default') as utm_campaign
+            FROM referral_links 
+            WHERE bank = ?
+            """,
             (bank,)
         )
         row = await cursor.fetchone()
@@ -309,11 +355,13 @@ async def get_referral_link(bank: str) -> str | None:
         parsed = urlparse(row["url"])
         query_params = parse_qs(parsed.query) if parsed.query else {}
         query_params = {k: v[0] if v else '' for k, v in query_params.items()}
-        query_params.update({
-            "utm_source": row["utm_source"],
-            "utm_medium": row["utm_medium"],
-            "utm_campaign": row["utm_campaign"]
-        })
+        
+        if "utm_source" not in query_params:
+            query_params["utm_source"] = row["utm_source"]
+        if "utm_medium" not in query_params:
+            query_params["utm_medium"] = row["utm_medium"]
+        if "utm_campaign" not in query_params:
+            query_params["utm_campaign"] = row["utm_campaign"]
         new_query = urlencode(query_params, safe='/:')
         return urlunparse((
             parsed.scheme,
