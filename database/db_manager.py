@@ -326,14 +326,19 @@ async def get_all_referrals_data(include_financial: bool = True):
         if include_financial:
             query = """
                 SELECT 
-                    u.*,
+                    u.user_id,
+                    u.full_name,
+                    u.phone_enc,
+                    u.bank,
+                    u.created_at,
                     COALESCE(p.card_received, 0) as card_received,
                     COALESCE(p.card_activated, 0) as card_activated,
                     COALESCE(p.purchase_made, 0) as purchase_made,
                     COALESCE(f.total_referral_bonus, 0) as total_referral_bonus,
                     COALESCE(f.total_your_bonus, 0) as total_your_bonus,
                     COALESCE(f.total_bonus_status, 'pending') as total_bonus_status,
-                    f.bonus_details
+                    f.bonus_details,
+                    f.updated_at as last_financial_update
                 FROM users u
                 LEFT JOIN referral_progress p ON u.user_id = p.user_id
                 LEFT JOIN financial_data f ON u.user_id = f.user_id
@@ -342,7 +347,11 @@ async def get_all_referrals_data(include_financial: bool = True):
         else:
             query = """
                 SELECT 
-                    u.*,
+                    u.user_id,
+                    u.full_name,
+                    u.phone_enc,
+                    u.bank,
+                    u.created_at,
                     COALESCE(p.card_received, 0) as card_received,
                     COALESCE(p.card_activated, 0) as card_activated,
                     COALESCE(p.purchase_made, 0) as purchase_made
