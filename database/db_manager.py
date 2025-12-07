@@ -52,6 +52,10 @@ async def init_db():
         ''')
         cursor = await db.execute("PRAGMA table_info(referral_progress)")
         columns = {row[1] for row in await cursor.fetchall()}
+        if "referrals_count" not in columns:
+            await db.execute("ALTER TABLE referral_progress ADD COLUMN referrals_count INTEGER DEFAULT 0")
+        if "successful_referrals" not in columns:
+            await db.execute("ALTER TABLE referral_progress ADD COLUMN successful_referrals INTEGER DEFAULT 0")
         if "card_last4" not in columns:
             await db.execute("ALTER TABLE referral_progress ADD COLUMN card_last4 TEXT")
         
