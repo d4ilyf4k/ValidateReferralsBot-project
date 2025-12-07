@@ -21,7 +21,7 @@ PAYMENT_RULES = {
 }
 
 
-def get_refferal_bonus(bank: str) -> int:
+def get_referral_bonus(bank: str) -> int:
     return PAYMENT_RULES.get(bank, {}).get("referral_bonus", 0)
 
 def calculate_your_bonus(bank: str) -> int:
