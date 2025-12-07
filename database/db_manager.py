@@ -225,11 +225,17 @@ async def update_financial_field(user_id: int, field: str, value):
             'type': int,
             'default': 0
         },
+        'your_bonus_status': {
+            'sql': "total_bonus_status = ?",
+            'type': str,
+            'default': 'pending',
+            'allowed_values': ['pending', 'confirmed']
+        },
         'total_bonus_status': {
             'sql': "total_bonus_status = ?",
             'type': str,
             'default': 'pending',
-            'allowed_values': ['pending', 'processing', 'paid', 'cancelled']
+            'allowed_values': ['pending', 'confirmed', 'processing', 'paid', 'cancelled']
         },
         'bonus_details': {
             'sql': "bonus_details = ?",

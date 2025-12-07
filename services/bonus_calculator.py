@@ -84,9 +84,9 @@ async def recalculate_all_bonuses(user_id: int):
         if not confirmed:
             all_confirmed = False
 
-    await update_financial_field(user_id, "referral_bonus_amount", total_referral_bonus)
+    await update_financial_field(user_id, "total_referral_bonus", total_referral_bonus)
     await update_financial_field(user_id, "total_your_bonus", total_your_bonus)
-    await update_financial_field(user_id, "your_bonus_status", "confirmed" if all_confirmed else "pending")
+    await update_financial_field(user_id, "total_bonus_status", "confirmed" if all_confirmed else "pending")
 
     import json
     await update_financial_field(user_id, "bonus_details", json.dumps(bonus_details))
