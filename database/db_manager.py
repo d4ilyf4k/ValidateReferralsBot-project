@@ -213,6 +213,7 @@ async def get_user_financial_data(user_id: int):
 
 async def update_financial_field(user_id: int, field: str, value):
     field = field.strip()
+    
     FIELD_CONFIG = {
         'total_referral_bonus': {
             'sql': "total_referral_bonus = ?",
@@ -255,43 +256,60 @@ async def update_financial_field(user_id: int, field: str, value):
             'type': str,
             'default': 'active'
         },
+        'bank': {
+            'sql': "bank = ?",
+            'type': str,
+            'default': None
+        },
+        'payment_method': {
+            'sql': "payment_method = ?",
+            'type': str,
+            'default': None
+        },
+        'transaction_id': {
+            'sql': "transaction_id = ?",
+            'type': str,
+            'default': None
+        },
         'updated_at': {
-            'sql': "updated_at = datetime('now')",  # Автоматически
+            'sql': "updated_at = datetime('now')",
             'type': None,
             'auto': True
         }
     }
     
     if field not in FIELD_CONFIG:
-        allowed = ', '.join(FIELD_CONFIG.keys())
+        allowed = ', '.join(sorted(FIELD_CONFIG.keys()))
         raise ValueError(f"Поле '{field}' не разрешено. Разрешены: {allowed}")
     
     config = FIELD_CONFIG[field]
     
     if config.get('type') and not config.get('auto', False):
-        if not isinstance(value, config['type']):
-            expected = config['type'].__name__ if hasattr(config['type'], '__name__') else str(config['type'])
-            actual = type(value).__name__
-            raise TypeError(f"Поле '{field}' ожидает {expected}, получен {actual}")
-        
+        expected_type = config['type']
+        if isinstance(expected_type, tuple):
+            if not any(isinstance(value, t) for t in expected_type):
+                expected_names = ' или '.join(t.__name__ for t in expected_type)
+                raise TypeError(f"Поле '{field}' ожидает {expected_names}, получен {type(value).__name__}")
+        elif not isinstance(value, expected_type):
+            raise TypeError(f"Поле '{field}' ожидает {expected_type.__name__}, получен {type(value).__name__}")
+    
     if 'allowed_values' in config and value not in config['allowed_values']:
         allowed = ', '.join(config['allowed_values'])
-        raise ValueError(f"Поле '{field}' допускает значения: {allowed}")    
+        raise ValueError(f"Поле '{field}' допускает значения: {allowed}")
     
     async with aiosqlite.connect(DB_PATH) as db:
         if config.get('auto', False):
-            # Автоматическое поле (например, updated_at)
             await db.execute(
                 f"UPDATE financial_data SET {config['sql']} WHERE user_id = ?",
-                (user_id,)  # только user_id
+                (user_id,)
             )
         else:
-            # Обычное поле
             await db.execute(
                 f"UPDATE financial_data SET {config['sql']} WHERE user_id = ?",
-                (value, user_id)  # value И user_id
+                (value, user_id)
             )
         await db.commit()
+        print(f"✅ Обновлено: {field} = {value} для user_id={user_id}")
         return True
 
 async def get_all_referrals_data():
