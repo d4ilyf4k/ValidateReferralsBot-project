@@ -42,9 +42,9 @@ def generate_referral_json(user_data: dict) -> str:
             "purchase_made": purchase_made
         },
         "financial_info": {
-            "referral_bonus_amount": referral_bonus,
+            "total_referral_bonus": referral_bonus,
             "referral_bonus_received": bonus_confirmed,  # или отдельное поле даты
-            "your_bonus_amount": your_bonus,
+            "total_your_bonus": your_bonus,
             "your_bonus_status": "confirmed" if bonus_confirmed else "pending"
         }
     }
@@ -83,9 +83,9 @@ async def generate_full_json_report() -> str:
                 "purchase_made": purchase_made
             },
             "financial_info": {
-                "referral_bonus_amount": referral_bonus,
+                "total_referral_bonus": referral_bonus,
                 "referral_bonus_received": bonus_confirmed,
-                "your_bonus_amount": your_bonus,
+                "total_your_bonus": your_bonus,
                 "your_bonus_status": "confirmed" if bonus_confirmed else "pending"
             }
         })
