@@ -96,6 +96,8 @@ async def init_db():
         if "utm_campaign" not in referral_columns:
             await db.execute("ALTER TABLE referral_links ADD COLUMN utm_campaign TEXT DEFAULT 'default'")
 
+        if "updated_at" not in financial_columns:
+            await db.execute("ALTER TABLE financial_data ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP")
         if "user_id" not in financial_columns:
             await db.execute("ALTER TABLE financial_data ADD COLUMN user_id INTEGER UNIQUE")
         if "total_referral_bonus" not in financial_columns:
@@ -323,51 +325,40 @@ async def get_all_referrals_data(include_financial: bool = True):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         
+        query = """
+            SELECT 
+                u.user_id,
+                u.full_name,
+                u.phone_enc,
+                u.bank,
+                u.created_at,
+                COALESCE(p.card_received, 0) as card_received,
+                COALESCE(p.card_activated, 0) as card_activated,
+                COALESCE(p.purchase_made, 0) as purchase_made
+        """
+        
         if include_financial:
-            query = """
-                SELECT 
-                    u.user_id,
-                    u.full_name,
-                    u.phone_enc,
-                    u.bank,
-                    u.created_at,
-                    COALESCE(p.card_received, 0) as card_received,
-                    COALESCE(p.card_activated, 0) as card_activated,
-                    COALESCE(p.purchase_made, 0) as purchase_made,
-                    COALESCE(f.total_referral_bonus, 0) as total_referral_bonus,
-                    COALESCE(f.total_your_bonus, 0) as total_your_bonus,
-                    COALESCE(f.total_bonus_status, 'pending') as total_bonus_status,
-                    f.bonus_details,
-                    f.updated_at as last_financial_update
-                FROM users u
-                LEFT JOIN referral_progress p ON u.user_id = p.user_id
-                LEFT JOIN financial_data f ON u.user_id = f.user_id
-                ORDER BY u.created_at DESC
+            query += """,
+                COALESCE(f.total_referral_bonus, 0) as total_referral_bonus,
+                COALESCE(f.total_your_bonus, 0) as total_your_bonus,
+                COALESCE(f.total_bonus_status, 'pending') as total_bonus_status,
+                f.bonus_details
             """
-        else:
-            query = """
-                SELECT 
-                    u.user_id,
-                    u.full_name,
-                    u.phone_enc,
-                    u.bank,
-                    u.created_at,
-                    COALESCE(p.card_received, 0) as card_received,
-                    COALESCE(p.card_activated, 0) as card_activated,
-                    COALESCE(p.purchase_made, 0) as purchase_made
-                FROM users u
-                LEFT JOIN referral_progress p ON u.user_id = p.user_id
-                ORDER BY u.created_at DESC
-            """
+        
+        query += """
+            FROM users u
+            LEFT JOIN referral_progress p ON u.user_id = p.user_id
+        """
+        
+        if include_financial:
+            query += "LEFT JOIN financial_data f ON u.user_id = f.user_id"
+        
+        query += " ORDER BY u.created_at DESC"
         
         print(f"🔍 Выполняем запрос:\n{query[:200]}...")
         
         cursor = await db.execute(query)
         rows = await cursor.fetchall()
-        
-        print(f"✅ Найдено записей: {len(rows)}")
-        if rows:
-            print(f"📊 Первая запись ключи: {list(dict(rows[0]).keys())}")
         
         return [dict(row) for row in rows]
 
