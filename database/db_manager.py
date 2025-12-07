@@ -52,10 +52,6 @@ async def init_db():
         ''')
         cursor = await db.execute("PRAGMA table_info(referral_progress)")
         columns = {row[1] for row in await cursor.fetchall()}
-        if "referrals_count" not in columns:
-            await db.execute("ALTER TABLE referral_progress ADD COLUMN referrals_count INTEGER DEFAULT 0")
-        if "successful_referrals" not in columns:
-            await db.execute("ALTER TABLE referral_progress ADD COLUMN successful_referrals INTEGER DEFAULT 0")
         if "card_last4" not in columns:
             await db.execute("ALTER TABLE referral_progress ADD COLUMN card_last4 TEXT")
         
@@ -327,50 +323,32 @@ async def get_all_referrals_data(include_financial: bool = True):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         
-        # Сначала узнаем структуру таблицы users
-        cursor = await db.execute("PRAGMA table_info(users)")
-        columns = await cursor.fetchall()
-        user_columns = [col[1] for col in columns]
-        
-        print(f"🔍 Колонки users: {user_columns}")
-        
-        # Определяем ключ для JOIN
-        if 'id' in user_columns:
-            join_key = 'u.id'
-        elif 'user_id' in user_columns:
-            join_key = 'u.user_id'
-        elif 'telegram_id' in user_columns:
-            join_key = 'u.telegram_id'
-        else:
-            # Если ничего не нашли, используем первую колонку
-            join_key = f'u.{user_columns[0]}'
-        
-        print(f"🔍 Используем JOIN ключ: {join_key}")
-        
         if include_financial:
-            query = f"""
+            query = """
                 SELECT 
                     u.*,
-                    COALESCE(p.referrals_count, 0) as referrals_count,
-                    COALESCE(p.successful_referrals, 0) as successful_referrals,
+                    COALESCE(p.card_received, 0) as card_received,
+                    COALESCE(p.card_activated, 0) as card_activated,
+                    COALESCE(p.purchase_made, 0) as purchase_made,
                     COALESCE(f.total_referral_bonus, 0) as total_referral_bonus,
                     COALESCE(f.total_your_bonus, 0) as total_your_bonus,
                     COALESCE(f.total_bonus_status, 'pending') as total_bonus_status,
                     f.bonus_details,
                     f.updated_at as last_financial_update
                 FROM users u
-                LEFT JOIN referral_progress p ON {join_key} = p.user_id
-                LEFT JOIN financial_data f ON {join_key} = f.user_id
+                LEFT JOIN referral_progress p ON u.user_id = p.user_id
+                LEFT JOIN financial_data f ON u.user_id = f.user_id
                 ORDER BY u.created_at DESC
             """
         else:
-            query = f"""
+            query = """
                 SELECT 
                     u.*,
-                    COALESCE(p.referrals_count, 0) as referrals_count,
-                    COALESCE(p.successful_referrals, 0) as successful_referrals
+                    COALESCE(p.card_received, 0) as card_received,
+                    COALESCE(p.card_activated, 0) as card_activated,
+                    COALESCE(p.purchase_made, 0) as purchase_made
                 FROM users u
-                LEFT JOIN referral_progress p ON {join_key} = p.user_id
+                LEFT JOIN referral_progress p ON u.user_id = p.user_id
                 ORDER BY u.created_at DESC
             """
         
