@@ -1,4 +1,4 @@
-from database.db_manager import get_user_banks, update_financial_field
+from database.db_manager import get_user_banks, update_financial_field, get_user_full_data
 import json
 
 PAYMENT_RULES = {
@@ -20,6 +20,9 @@ PAYMENT_RULES = {
     }
 }
 
+
+def get_refferal_bonus(bank: str) -> int:
+    return PAYMENT_RULES.get(bank, {}).get("referral_bonus", 0)
 
 def calculate_your_bonus(bank: str) -> int:
     return PAYMENT_RULES.get(bank, {}).get("referrer_bonus", 0)
@@ -44,7 +47,6 @@ async def recalculate_all_bonuses(user_id: int):
     bonus_details = {}
 
     for bank in banks:
-        from database.db_manager import get_user_full_data
         user_data = await get_user_full_data(user_id)
         if not user_data:
             continue
