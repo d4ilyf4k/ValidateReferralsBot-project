@@ -1,7 +1,7 @@
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from database.db_manager import get_user_full_data
-from services.bonus_calculator import is_bonus_confirmed, calculate_your_bonus
+from services.bonus_calculator import is_bonus_confirmed, get_referral_bonus
 
 router = Router()
 
@@ -20,7 +20,8 @@ async def user_status(message: types.Message):
     card_status = "✅ Активирована" if card_activated else "❌ Не активирована"
     purchase_status = "✅ Совершена" if purchase_made else "❌ Не совершена"
 
-    your_bonus = calculate_your_bonus(data["bank"])
+    referral_bonus = get_referral_bonus(data["bank"])
+    
     bonus_confirmed = is_bonus_confirmed(
         bank=data["bank"],
         card_activated=card_activated,
@@ -33,9 +34,9 @@ async def user_status(message: types.Message):
         f"🏦 <b>Банк:</b> {bank_name}\n"
         f"🔓 <b>Активация карты:</b> {card_status}\n"
         f"💳 <b>Первая покупка:</b> {purchase_status}\n\n"
-        f"💰 <b>Ваше вознаграждение:</b> {your_bonus:,} руб.\n"
+        f"💰 <b>Ваш бонус:</b> {referral_bonus:,} руб.\n"
         f"📊 <b>Статус бонуса:</b> {bonus_status}\n\n"
         "💡 <i>Бонус подтверждается автоматически при выполнении условий.</i>"
     )
-
+    
     await message.answer(status_message, parse_mode="HTML")
