@@ -318,17 +318,6 @@ async def update_financial_field(user_id: int, field: str, value):
         print(f"✅ Обновлено: {field} = {value} для user_id={user_id}")
         return True
 
-async def get_all_referrals_data():
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute("""
-            SELECT u.*, p.*
-            FROM users u
-            LEFT JOIN referral_progress p ON u.user_id = p.user_id
-        """)
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
-
 async def get_all_referrals_data(include_financial: bool = True):
     """Получаем данные всех рефералов."""
     async with aiosqlite.connect(DB_PATH) as db:
