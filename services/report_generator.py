@@ -1,5 +1,6 @@
 import json
-from database.db_manager import decrypt_phone, get_all_referrals_data
+from datetime import datetime
+from database.db_manager import decrypt_phone, get_all_referrals_data, get_user_financial_data
 from services.bonus_calculator import is_bonus_confirmed, calculate_your_bonus
 
 def format_optional_date(date_val):
@@ -51,46 +52,57 @@ def generate_referral_json(user_data: dict) -> str:
     return json.dumps(report, ensure_ascii=False, indent=2)
 
 async def generate_full_json_report() -> str:
-    referrals = await get_all_referrals_data()
-    result = []
-
-    for ref in referrals:
-        try:
-            phone = decrypt_phone(ref["phone_enc"])
-        except Exception:
-            phone = "[ошибка расшифровки]"
-
-        bank = ref["bank"]
-        your_bonus = 500 if bank == "t-bank" else 700
-        referral_bonus = 1000 if bank == "t-bank" else 1500
-
-        card_activated = bool(ref.get("card_activated", False))
-        purchase_made = bool(ref.get("purchase_made", False))
-
-        if bank == "t-bank":
-            bonus_confirmed = card_activated and purchase_made
-        else:  # alpha
-            bonus_confirmed = card_activated
-
-        result.append({
-            "personal_info": {
-                "full_name": ref["full_name"],
-                "phone": phone,
-                "bank": bank,
-            },
-            "application_status": {
-                "card_activated": card_activated,
-                "purchase_made": purchase_made
-            },
-            "financial_info": {
-                "total_referral_bonus": referral_bonus,
-                "referral_bonus_received": bonus_confirmed,
-                "total_your_bonus": your_bonus,
-                "your_bonus_status": "confirmed" if bonus_confirmed else "pending"
+    """Генерирует полный JSON отчёт по всем рефералам."""
+    try:
+        # 1. Получаем данные всех рефералов
+        referrals_data = await get_all_referrals_data()
+        
+        # 2. Обрабатываем каждую запись
+        processed_data = []
+        for referral in referrals_data:
+            # Получаем финансовые данные
+            financial_data = await get_user_financial_data(referral.get('user_id'))
+            
+            # Формируем запись
+            record = {
+                'user_id': referral.get('user_id'),
+                'username': referral.get('username', ''),
+                'first_name': referral.get('first_name', ''),
+                'last_name': referral.get('last_name', ''),
+                'phone': referral.get('phone', ''),
+                'bank_preference': referral.get('bank_preference', ''),
+                'registration_date': referral.get('created_at', ''),
+                'referrals_count': referral.get('referrals_count', 0),
+                'successful_referrals': referral.get('successful_referrals', 0),
+                'financial_data': financial_data or {},
+                'total_referral_bonus': financial_data.get('total_referral_bonus', 0) if financial_data else 0,
+                'total_your_bonus': financial_data.get('total_your_bonus', 0) if financial_data else 0,
+                'bonus_status': financial_data.get('total_bonus_status', 'pending') if financial_data else 'pending'
             }
-        })
-
-    return json.dumps(result, ensure_ascii=False, indent=2)
+            processed_data.append(record)
+        
+        # 3. Создаём структуру отчёта
+        report = {
+            'generated_at': datetime.now().isoformat(),
+            'total_users': len(processed_data),
+            'total_successful_referrals': sum(r.get('successful_referrals', 0) for r in processed_data),
+            'total_pending_bonus': sum(r.get('total_referral_bonus', 0) for r in processed_data),
+            'total_paid_bonus': sum(r.get('total_your_bonus', 0) for r in processed_data),
+            'users': processed_data
+        }
+        
+        # 4. Конвертируем в JSON с красивым форматированием
+        return json.dumps(report, ensure_ascii=False, indent=2, default=str)
+        
+    except Exception as e:
+        print(f"❌ Ошибка генерации JSON отчёта: {e}")
+        # Возвращаем пустой отчёт с ошибкой
+        error_report = {
+            'error': str(e),
+            'generated_at': datetime.now().isoformat(),
+            'users': []
+        }
+        return json.dumps(error_report, ensure_ascii=False, indent=2)
 
 async def generate_referral_text_report_with_conditions(user_data: dict) -> str:
 

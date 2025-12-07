@@ -1,4 +1,6 @@
 import logging
+import json
+from datetime import datetime
 from config import settings
 from aiogram import Router, types, F
 from aiogram.types import BufferedInputFile, CallbackQuery
@@ -79,18 +81,47 @@ async def cmd_update_link(message: types.Message):
 async def cmd_report(message: types.Message):
     if not is_admin(message.from_user.id):
         logger.warning(f"Попытка доступа к /report от не-админа: {message.from_user.id}")
+        await message.answer("🚫 Доступ только для администраторов.")
         return
-
+    
+    processing_msg = await message.answer("⏳ Генерируем отчёт...")
+    
     try:
         json_data = await generate_full_json_report()
+        
+        if not json_data:
+            await processing_msg.edit_text("📭 Нет данных для отчёта.")
+            return
+        
+        try:
+            report_dict = json.loads(json_data)
+            user_count = len(report_dict.get('users', []))
+        except:
+            user_count = 0
+        
         await message.answer_document(
-            BufferedInputFile(json_data.encode(), filename="all_referrals.json"),
-            caption="📄 Полный отчёт по всем рефералам в формате JSON."
+            BufferedInputFile(
+                json_data.encode("utf-8"),
+                filename=f"report_{datetime.now().strftime('%Y%m%d')}.json"
+            ),
+            caption=f"📊 Отчёт по рефералам\n👥 Пользователей: {user_count}\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
         )
-        logger.info(f"Админ {message.from_user.id} запросил /report")
+        
+        await processing_msg.delete()
+        
+        logger.info(f"Админ {message.from_user.id} успешно получил отчёт ({user_count} пользователей)")
+        
     except Exception as e:
-        logger.error(f"Ошибка при генерации /report: {e}")
-        await message.answer("❌ Произошла ошибка при генерации отчёта.")
+        logger.error(f"Ошибка при генерации /report: {e}", exc_info=True)
+        await processing_msg.edit_text(
+            f"❌ Ошибка генерации отчёта:\n"
+            f"```{str(e)[:150]}```\n\n"
+            f"Проверьте:\n"
+            f"1. Наличие функции generate_full_json_report\n"
+            f"2. Доступ к базе данных\n"
+            f"3. Корректность данных в таблицах",
+            parse_mode="Markdown"
+        )
 
 @router.message(Command("find"))
 async def cmd_find(message: types.Message):

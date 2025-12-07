@@ -1,4 +1,6 @@
+import json
 from aiogram import Router, F, types
+from datetime import datetime
 from config import settings
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -9,7 +11,6 @@ from handlers.admin_handler import send_reminder_to_user
 from utils.keyboards import (
     get_phone_kb,
     get_bank_kb,
-    get_skip_kb,
     get_yes_no_kb,
     get_user_main_menu_kb,
     get_admin_main_menu_kb,
@@ -184,16 +185,36 @@ async def admin_report(callback: types.CallbackQuery):
     if callback.from_user.id not in settings.ADMIN_IDS:
         await callback.answer("🚫 Доступ запрещён.", show_alert=True)
         return
-
+    
+    await callback.answer("📊 Генерируем отчёт...", show_alert=False)
+    
     try:
         json_data = await generate_full_json_report()
+        
+        if not json_data or len(json_data) < 50:
+            await callback.message.answer("📭 Нет данных для отчёта.")
+            return
+        
         await callback.message.answer_document(
-            BufferedInputFile(json_data.encode("utf-8"), filename="all_referrals.json"),
-            caption="📄 Полный отчёт по всем рефералам."
+            BufferedInputFile(
+                json_data.encode("utf-8"),
+                filename=f"referral_report_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+            ),
+            caption=f"📄 Отчёт по рефералам\n📊 Пользователей: {len(json.loads(json_data).get('users', []))}\n🕒 Сгенерирован: {datetime.now().strftime('%H:%M')}"
         )
+        
     except Exception as e:
-        print(f"Ошибка генерации полного отчёта: {e}")
-        await callback.message.answer("❌ Не удалось сгенерировать отчёт.")
+        print(f"❌ Ошибка генерации отчёта: {e}")
+        # Подробное логирование
+        import traceback
+        traceback.print_exc()
+        
+        await callback.message.answer(
+            f"❌ Ошибка генерации отчёта:\n"
+            f"`{str(e)[:100]}`\n\n"
+            f"Проверьте логи или настройки БД.",
+            parse_mode="Markdown"
+        )
     
     await callback.answer()
 
