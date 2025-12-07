@@ -323,10 +323,10 @@ async def get_all_referrals_data(include_financial: bool = True):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         
-        # Всегда выбираем базовые поля пользователя
         query = """
             SELECT 
                 u.user_id,
+                u.user_id as id,  # ДОБАВЛЯЕМ поле id для совместимости
                 u.full_name,
                 u.phone_enc,
                 u.bank,
@@ -364,7 +364,7 @@ async def get_all_referrals_data(include_financial: bool = True):
             print(f"📊 Первая запись ключи: {list(dict(rows[0]).keys())}")
         
         return [dict(row) for row in rows]
-
+    
 async def get_finance_summary() -> Dict[str, int]:
     async with aiosqlite.connect(DB_PATH) as db:
 

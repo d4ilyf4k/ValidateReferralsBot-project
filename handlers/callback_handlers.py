@@ -1,6 +1,5 @@
 import json
 from aiogram import Router, F, types
-from datetime import datetime
 from config import settings
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -21,11 +20,12 @@ from database.db_manager import (
         update_progress_field, 
         get_user_by_phone, 
         log_reminder_sent, 
-        get_user_full_data
+        get_user_full_data,
+        get_all_referrals_data,
+        decrypt_phone
 )
 from services.report_generator import (
     generate_referral_text_report_with_conditions, 
-    generate_full_json_report
     )
 from services.bonus_calculator import recalculate_all_bonuses
 from handlers.finance_handler import show_finance_report
@@ -189,23 +189,48 @@ async def admin_report(callback: types.CallbackQuery):
     await callback.answer("📊 Генерируем отчёт...", show_alert=False)
     
     try:
-        json_data = await generate_full_json_report()
+        raw_data = await get_all_referrals_data(include_financial=True)
         
-        if not json_data or len(json_data) < 50:
+        if not raw_data:
             await callback.message.answer("📭 Нет данных для отчёта.")
             return
         
+        import json
+        from datetime import datetime
+        
+        processed_users = []
+        for user in raw_data:
+            user_dict = dict(user)
+            
+            phone_enc = user_dict.get('phone_enc')
+            if phone_enc:
+                user_dict['phone'] = decrypt_phone(phone_enc)
+            else:
+                user_dict['phone'] = None
+            
+            if 'phone_enc' in user_dict:
+                del user_dict['phone_enc']
+            
+            processed_users.append(user_dict)
+        
+        json_result = {
+            "generated_at": datetime.now().isoformat(),
+            "total_users": len(processed_users),
+            "users": processed_users
+        }
+        
+        json_str = json.dumps(json_result, ensure_ascii=False, indent=2, default=str)
+        
         await callback.message.answer_document(
             BufferedInputFile(
-                json_data.encode("utf-8"),
+                json_str.encode("utf-8"),
                 filename=f"referral_report_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
             ),
-            caption=f"📄 Отчёт по рефералам\n📊 Пользователей: {len(json.loads(json_data).get('users', []))}\n🕒 Сгенерирован: {datetime.now().strftime('%H:%M')}"
+            caption=f"📄 Отчёт по рефералам\n📊 Пользователей: {len(processed_users)}\n🕒 Сгенерирован: {datetime.now().strftime('%H:%M')}"
         )
         
     except Exception as e:
         print(f"❌ Ошибка генерации отчёта: {e}")
-        # Подробное логирование
         import traceback
         traceback.print_exc()
         
