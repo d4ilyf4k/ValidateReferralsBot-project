@@ -319,12 +319,32 @@ async def update_financial_field(user_id: int, field: str, value):
         return True
 
 async def get_all_referrals_data(include_financial: bool = True):
-    """Получаем данные всех рефералов."""
+    """Получаем данные всех рефералов с отладкой."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         
+        # Сначала узнаем структуру таблицы users
+        cursor = await db.execute("PRAGMA table_info(users)")
+        columns = await cursor.fetchall()
+        user_columns = [col[1] for col in columns]
+        
+        print(f"🔍 Колонки users: {user_columns}")
+        
+        # Определяем ключ для JOIN
+        if 'id' in user_columns:
+            join_key = 'u.id'
+        elif 'user_id' in user_columns:
+            join_key = 'u.user_id'
+        elif 'telegram_id' in user_columns:
+            join_key = 'u.telegram_id'
+        else:
+            # Если ничего не нашли, используем первую колонку
+            join_key = f'u.{user_columns[0]}'
+        
+        print(f"🔍 Используем JOIN ключ: {join_key}")
+        
         if include_financial:
-            cursor = await db.execute("""
+            query = f"""
                 SELECT 
                     u.*,
                     COALESCE(p.referrals_count, 0) as referrals_count,
@@ -335,22 +355,30 @@ async def get_all_referrals_data(include_financial: bool = True):
                     f.bonus_details,
                     f.updated_at as last_financial_update
                 FROM users u
-                LEFT JOIN referral_progress p ON u.user_id = p.user_id
-                LEFT JOIN financial_data f ON u.user_id = f.user_id
+                LEFT JOIN referral_progress p ON {join_key} = p.user_id
+                LEFT JOIN financial_data f ON {join_key} = f.user_id
                 ORDER BY u.created_at DESC
-            """)
+            """
         else:
-            cursor = await db.execute("""
+            query = f"""
                 SELECT 
                     u.*,
                     COALESCE(p.referrals_count, 0) as referrals_count,
                     COALESCE(p.successful_referrals, 0) as successful_referrals
                 FROM users u
-                LEFT JOIN referral_progress p ON u.user_id = p.user_id
+                LEFT JOIN referral_progress p ON {join_key} = p.user_id
                 ORDER BY u.created_at DESC
-            """)
+            """
         
+        print(f"🔍 Выполняем запрос:\n{query[:200]}...")
+        
+        cursor = await db.execute(query)
         rows = await cursor.fetchall()
+        
+        print(f"✅ Найдено записей: {len(rows)}")
+        if rows:
+            print(f"📊 Первая запись ключи: {list(dict(rows[0]).keys())}")
+        
         return [dict(row) for row in rows]
 
 async def get_finance_summary() -> Dict[str, int]:
