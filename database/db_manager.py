@@ -96,8 +96,6 @@ async def init_db():
 
         cursor = await db.execute("PRAGMA table_info(financial_data)")
         financial_columns = {row[1] for row in await cursor.fetchall()}
-        if "updated_at" not in financial_columns:
-            await db.execute("ALTER TABLE financial_data ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP")
         if "user_id" not in financial_columns:
             await db.execute("ALTER TABLE financial_data ADD COLUMN user_id INTEGER UNIQUE")
         if "total_referral_bonus" not in financial_columns:
@@ -325,6 +323,7 @@ async def get_all_referrals_data(include_financial: bool = True):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         
+        # Всегда выбираем базовые поля пользователя
         query = """
             SELECT 
                 u.user_id,
@@ -359,6 +358,10 @@ async def get_all_referrals_data(include_financial: bool = True):
         
         cursor = await db.execute(query)
         rows = await cursor.fetchall()
+        
+        print(f"✅ Найдено записей: {len(rows)}")
+        if rows:
+            print(f"📊 Первая запись ключи: {list(dict(rows[0]).keys())}")
         
         return [dict(row) for row in rows]
 
