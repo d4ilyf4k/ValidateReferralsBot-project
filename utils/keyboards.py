@@ -92,3 +92,23 @@ def get_admin_panel_kb():
         [InlineKeyboardButton(text="📨 Отправить напоминание", callback_data="admin_remind")],
         [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_back")]
         ])
+
+def get_agreement_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, согласен", callback_data="agree_conditions"),
+            InlineKeyboardButton(text="📖 Подробнее", callback_data="show_details")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Нет, отклонить", callback_data="disagree_conditions")
+        ]],
+        resize_keyboard=True,
+        one_time_keyboard=True                            
+    )
+
+def get_detailed_conditions_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Принимаю условия", callback_data="agree_conditions")],
+        [InlineKeyboardButton(text="↩️ Назад к условиям", callback_data="back_to_main")]],
+        resize_keyboard=True,
+    )
