@@ -131,7 +131,7 @@ async def _process_tbank_agreement_internal(callback: types.CallbackQuery, state
     if link:
         success_message = (
             "<b>🎉 Отлично! Ваша персональная ссылка:</b>\n\n"
-            f"<code>{link}</code>\n\n"
+            f"{link}\n\n"
                         
             "<b>🔹 Инструкция по оформлению:</b>\n"
             "1. Перейдите по ссылке выше\n"
@@ -184,7 +184,7 @@ async def _process_alpha_agreement_internal(callback: types.CallbackQuery, state
     if link:
         success_message = (
             "<b>🎉 Отлично! Ваша персональная ссылка для Альфа-Банка:</b>\n\n"
-            f"<code>{link}</code>\n\n"
+            f"{link}\n\n"
             
             "<b>🔹 Инструкция:</b>\n"
             "1. Перейдите по ссылке выше\n"
