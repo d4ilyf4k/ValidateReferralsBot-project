@@ -2,16 +2,90 @@ from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 from aiogram.fsm.state import State, StatesGroup
-from database.db_manager import get_referral_link, add_user_bank
-from utils.keyboards import get_bank_kb, get_user_main_menu_kb, get_agreement_kb, get_detailed_conditions_kb
 from services.bonus_calculator import recalculate_all_bonuses
 
+# Для тестирования - временные функции БД
+async def get_referral_link(bank_key: str) -> str:
+    """Временная функция для получения ссылки"""
+    if bank_key == "t-bank":
+        return "https://tbank.ru/ref/test123"
+    else:
+        return "https://alfabank.ru/ref/test456"
+
+async def add_user_bank(user_id: int, bank_key: str):
+    """Временная функция для сохранения выбора банка"""
+    print(f"Пользователь {user_id} выбрал банк: {bank_key}")
+    return True
 
 router = Router()
 
+# Определяем состояния FSM
 class BankAgreement(StatesGroup):
     waiting_agreement = State()
     waiting_agreement_alpha = State()
+
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ КЛАВИАТУР ==========
+
+def get_bank_kb():
+    """Клавиатура для выбора банка"""
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+    
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🏦Т-Банк")],
+            [KeyboardButton(text="🏦Альфа-Банк")],
+            [KeyboardButton(text="⬅️ Назад")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+    return keyboard
+
+def get_user_main_menu_kb():
+    """Главное меню пользователя"""
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+    
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🏦 Выбрать банк")],
+            [KeyboardButton(text="📊 Статистика")],
+            [KeyboardButton(text="❓ Помощь")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+    return keyboard
+
+def get_agreement_kb():
+    """Клавиатура для согласия с условиями"""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, согласен", callback_data="agree_conditions"),
+            InlineKeyboardButton(text="📖 Подробнее", callback_data="show_details")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Нет, отклонить", callback_data="disagree_conditions")
+        ]
+    ])
+    return keyboard
+
+def get_detailed_conditions_kb():
+    """Клавиатура для подробных условий с кнопкой принятия"""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Принимаю условия", callback_data="accept_from_details")
+        ],
+        [
+            InlineKeyboardButton(text="↩️ Назад к условиям", callback_data="back_to_main")
+        ]
+    ])
+    return keyboard
+
+# ========== ОБРАБОТЧИКИ СОБЫТИЙ ==========
 
 @router.message(F.text == "🏦 Выбрать банк")
 async def choose_bank(message: types.Message):
@@ -27,7 +101,6 @@ async def send_bank_info_and_link(message: types.Message, state: FSMContext):
     await state.update_data(bank_key=bank_key, user_id=message.from_user.id)
     
     if bank_key == "t-bank":
-        # Отправляем информацию о новогодней акции
         promo_text = (
             "🎄 <b>НОВОГОДНЯЯ АКЦИЯ Т-БАНКА</b> 🎄\n\n"
             
@@ -47,7 +120,6 @@ async def send_bank_info_and_link(message: types.Message, state: FSMContext):
             "────────────────────"
         )
         
-        # Отправляем промо-сообщение
         await message.answer(promo_text, parse_mode="HTML")
         
         desc = (
@@ -68,16 +140,17 @@ async def send_bank_info_and_link(message: types.Message, state: FSMContext):
             "•✅ Бесплатное снятие наличных в банкоматах <b>Т-Банк</b> на любую сумму до 500000₽ в месяц, в остальных банкоматах — <b>от 3000₽ до 100000₽</b>\n"
             "•✅ Переводы без комиссии в другой банк по номеру карты или номеру телефона до 20000₽ в месяц, <b>с СБП без комиссии</>\n"
             "•✅ Мультифункциональное приложение, а также круглосуточную поддержку\n\n"
-
+            
             "<b>⏱️ Сроки и детали:</b>\n"
             "• Бонус 500₽ начисляется в течение <b>10 рабочих дней</b> после выполнения условий\n"
             "• Карта выпускается и доставляется <b>бесплатно</b>\n"
-            "• Доставка курьером в удобное место и время\n\n"            
+            "• Доставка курьером в удобное место и время\n\n"
             
             "<i>⚠️ Внимательно ознакомьтесь с условиями выше.</i>\n\n"
             "<b>Вы согласны с условиями и готовы получить ссылку?</b>"
         )
         
+        # Устанавливаем состояние и показываем кнопки согласия
         await state.set_state(BankAgreement.waiting_agreement)
         await message.answer(desc, parse_mode="HTML", reply_markup=get_agreement_kb())
         
@@ -103,9 +176,23 @@ async def send_bank_info_and_link(message: types.Message, state: FSMContext):
             "<b>Вы согласны с условиями и готовы получить ссылку?</b>"
         )
         
+        # Устанавливаем состояние для Альфа-Банка
         await state.set_state(BankAgreement.waiting_agreement_alpha)
         await message.answer(desc, parse_mode="HTML", reply_markup=get_agreement_kb())
 
+# ========== ОБРАБОТЧИКИ CALLBACK КНОПОК ==========
+
+# Обработка согласия для Т-Банка (основная кнопка)
+@router.callback_query(F.data == "agree_conditions", StateFilter(BankAgreement.waiting_agreement))
+async def process_tbank_agreement(callback: types.CallbackQuery, state: FSMContext):
+    await _process_tbank_agreement_internal(callback, state)
+
+# Обработка согласия для Альфа-Банка (основная кнопка)
+@router.callback_query(F.data == "agree_conditions", StateFilter(BankAgreement.waiting_agreement_alpha))
+async def process_alpha_agreement(callback: types.CallbackQuery, state: FSMContext):
+    await _process_alpha_agreement_internal(callback, state)
+
+# Обработка кнопки "Принимаю условия" из детальных условий для Т-Банка
 @router.callback_query(F.data == "accept_from_details", StateFilter(BankAgreement.waiting_agreement))
 async def accept_from_details_tbank(callback: types.CallbackQuery, state: FSMContext):
     await _process_tbank_agreement_internal(callback, state)
@@ -115,25 +202,29 @@ async def accept_from_details_tbank(callback: types.CallbackQuery, state: FSMCon
 async def accept_from_details_alpha(callback: types.CallbackQuery, state: FSMContext):
     await _process_alpha_agreement_internal(callback, state)
 
-@router.callback_query(F.data == "agree_conditions", StateFilter(BankAgreement.waiting_agreement))
-async def process_tbank_agreement(callback: types.CallbackQuery, state: FSMContext):
-    await _process_tbank_agreement_internal(callback, state)
-
+# Внутренняя функция для обработки Т-Банка
 async def _process_tbank_agreement_internal(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    bank_key = data.get("bank_key", "t-bank")
-    user_id = data.get("user_id", callback.from_user.id)
-    
-    await add_user_bank(user_id, bank_key)
-    await recalculate_all_bonuses(user_id)
-    
-    link = await get_referral_link(bank_key)
-    
-    if link:
+    try:
+        # Получаем данные из состояния
+        data = await state.get_data()
+        user_id = data.get("user_id", callback.from_user.id)
+        
+        # Сохраняем выбор банка в БД
+        await add_user_bank(user_id, "t-bank")
+        
+        # Получаем реферальную ссылку
+        link = await get_referral_link("t-bank")
+        
+        # Формируем промокод
+        promocode = "TINKOFF2FREE"
+        
         success_message = (
             "<b>🎉 Отлично! Ваша персональная ссылка:</b>\n\n"
             f"<code>{link}</code>\n\n"
-                        
+            
+            "<b>📌 Промокод для 2 месяцев без обслуживания:</b>\n"
+            f"<b>{promocode}</b>\n\n"
+            
             "<b>🔹 Инструкция по оформлению:</b>\n"
             "1. Перейдите по ссылке выше\n"
             "2. Оформите карту Tinkoff Black\n"
@@ -156,32 +247,29 @@ async def _process_tbank_agreement_internal(callback: types.CallbackQuery, state
             reply_markup=None
         )
         
+        # Отправляем главное меню отдельным сообщением
         await callback.message.answer("Главное меню:", reply_markup=get_user_main_menu_kb())
         
-    else:
-        await callback.message.edit_text(
-            "⚠️ Ссылка временно недоступна. Обратитесь к администратору.",
-            parse_mode="HTML",
-            reply_markup=None
-        )
-    
-    await state.clear()
+        await state.clear()
+        await callback.answer("Ссылка отправлена!")
+        
+    except Exception as e:
+        await callback.answer(f"Ошибка: {str(e)}", show_alert=True)
+        await state.clear()
 
-@router.callback_query(F.data == "agree_conditions", StateFilter(BankAgreement.waiting_agreement_alpha))
-async def process_alpha_agreement(callback: types.CallbackQuery, state: FSMContext):
-    await _process_alpha_agreement_internal(callback, state)
-
+# Внутренняя функция для обработки Альфа-Банка
 async def _process_alpha_agreement_internal(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    bank_key = data.get("bank_key", "alpha")
-    user_id = data.get("user_id", callback.from_user.id)
-    
-    await add_user_bank(user_id, bank_key)
-    await recalculate_all_bonuses(user_id)
-    
-    link = await get_referral_link(bank_key)
-    
-    if link:
+    try:
+        # Получаем данные из состояния
+        data = await state.get_data()
+        user_id = data.get("user_id", callback.from_user.id)
+        
+        # Сохраняем выбор банка в БД
+        await add_user_bank(user_id, "alpha")
+        
+        # Получаем реферальную ссылку
+        link = await get_referral_link("alpha")
+        
         success_message = (
             "<b>🎉 Отлично! Ваша персональная ссылка для Альфа-Банка:</b>\n\n"
             f"<code>{link}</code>\n\n"
@@ -203,53 +291,22 @@ async def _process_alpha_agreement_internal(callback: types.CallbackQuery, state
             reply_markup=None
         )
         
+        # Отправляем главное меню отдельным сообщением
         await callback.message.answer("Главное меню:", reply_markup=get_user_main_menu_kb())
         
-    else:
-        await callback.message.edit_text(
-            "⚠️ Ссылка временно недоступна. Обратитесь к администратору.",
-            parse_mode="HTML",
-            reply_markup=None
-        )
-    
-    await state.clear()
-    await callback.answer()
+        await state.clear()
+        await callback.answer("Ссылка отправлена!")
+        
+    except Exception as e:
+        await callback.answer(f"Ошибка: {str(e)}", show_alert=True)
+        await state.clear()
 
-@router.callback_query(F.data == "disagree_conditions", StateFilter("*"))
-async def process_disagreement(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    bank_key = data.get("bank_key", "t-bank")
-    
-    if bank_key == "t-bank":
-        text = (
-            "❌ Вы отказались от получения ссылки.\n\n"
-            "🎄 <i>Напомним: новогодняя акция «Золотой Билет» действует только до 24.12.2025!</i>\n\n"
-            "Вы можете выбрать другой банк или вернуться в главное меню."
-        )
-    else:
-        text = (
-            "❌ Вы отказались от получения ссылки.\n\n"
-            "Вы можете выбрать другой банк или вернуться в главное меню."
-        )
-    
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=None
-    )
-    
-    await callback.message.answer(
-        "Выберите действие:",
-        reply_markup=get_user_main_menu_kb()
-    )
-    
-    await state.clear()
-    await callback.answer()
-
+# Обработка запроса подробных условий
 @router.callback_query(F.data == "show_details")
 async def show_detailed_conditions(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     bank_key = data.get("bank_key", "t-bank")
+    
     if bank_key == "t-bank":
         detailed_text = (
             "<b>📄 Подробные условия Т-Банк:</b>\n\n"
@@ -260,19 +317,25 @@ async def show_detailed_conditions(callback: types.CallbackQuery, state: FSMCont
             "• <b>Гарантировано:</b> Кэшбэк на сладости и другие категории\n"
             "• <b>Дополнительно:</b> Участие в розыгрыше призов\n\n"
             
-            "<b>Требования к клиенту:</b>\n"
-            "• Не иметь других продуктов Т-Банка\n"
-            "• Оформить именно Tinkoff Black (не Junior/Drive)\n"
+            "<b>💳 Условия получения бонуса 500₽:</b>\n"
+            "• Быть новым клиентом Т-Банка\n"
+            "• Оформить карту Tinkoff Black (не Junior/Drive)\n"
             "• Совершить покупку в течение 30 дней после получения карты\n\n"
             
-            "<b>Бонусы:</b>\n"
+            "<b>💰 Бонусы:</b>\n"
             "• 500 рублей на счёт после первой покупки\n"
-            "• 2 месяца бесплатного обслуживания (по промокоду)\n\n"
+            "• 2 месяца бесплатного обслуживания (по промокоду)\n"
+            "• + участие в новогодней акции «Золотой Билет»\n\n"
             
-            "<b>Сроки:</b>\n"
-            "• Бонус начисляется до 10 рабочих дней\n"
-            "• Карта доставляется бесплатно\n\n"
+            "<b>⏱ Сроки:</b>\n"
+            "• Бонус 500₽ начисляется до 10 рабочих дней\n"
+            "• Карта доставляется бесплатно\n"
+            "• Новогодняя акция действует до 24.12.2025\n\n"
             
+            "<b>📌 Официальные правила:</b>\n"
+            "https://www.tinkoff.ru/about/promo/rules/500rub/\n\n"
+            
+            "<i>Вопросы: 8 800 555-77-78</i>"
         )
     else:
         detailed_text = (
@@ -300,6 +363,40 @@ async def show_detailed_conditions(callback: types.CallbackQuery, state: FSMCont
     )
     await callback.answer()
 
+# Обработка отказа
+@router.callback_query(F.data == "disagree_conditions", StateFilter("*"))
+async def process_disagreement(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    bank_key = data.get("bank_key", "t-bank")
+    
+    if bank_key == "t-bank":
+        text = (
+            "❌ Вы отказались от получения ссылки.\n\n"
+            "🎄 <i>Напомним: новогодняя акция «Золотой Билет» действует только до 24.12.2025!</i>\n\n"
+            "Вы можете выбрать другой банк или вернуться в главное меню."
+        )
+    else:
+        text = (
+            "❌ Вы отказались от получения ссылки.\n\n"
+            "Вы можете выбрать другой банк или вернуться в главное меню."
+        )
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=None
+    )
+    
+    # Предлагаем вернуться к выбору
+    await callback.message.answer(
+        "Выберите действие:",
+        reply_markup=get_user_main_menu_kb()
+    )
+    
+    await state.clear()
+    await callback.answer()
+
+# Обработка возврата к основным условиям
 @router.callback_query(F.data == "back_to_main")
 async def back_to_main_conditions(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -309,23 +406,18 @@ async def back_to_main_conditions(callback: types.CallbackQuery, state: FSMConte
         desc = (
             "<b>🏦 Т-Банк | Карта Tinkoff Black</b>\n\n"
             
-            "<b>🎁 Новогодняя акция «Золотой Билет» в Т-Банке за подробностями нажмите кнопку 📖 Подробнее.</b> \n\n"
-            
-            "<b>📋 Условия для получения бонуса:</b>\n\n"
+            "<b>📋 Условия для получения бонуса 500₽ (и участия в новогодней акции):</b>\n\n"
             "•✅ Быть <b>новым клиентом</b> Т-Банка (без других продуктов банка)\n"
-            
-            "•✅ Оформить и активировать именно <b>карту Tinkoff Black</b> (не Junior, не Drive)\n"
-            "•✅ Совершить покупку картой <b>на сумму от 500₽</b> в течение 30 дней после получения\n"
+            "•✅ Оформить именно <b>карту Tinkoff Black</b> (не Junior, не Drive)\n"
+            "•✅ Совершить <b>любую покупку</b> картой в течение 30 дней после получения\n"
+            "•✅ Активировать <b>промокод на 2 месяца бесплатного обслуживания</b>\n\n"
             
             "<b>💰 Что вы получаете:</b>\n\n"
-            "•✅ <b>500₽</b> на счёт карты после первой покупки\n"
-            "•✅ Все преимущества Tinkoff Black (кэшбэк до 30%, проценты на остаток)\n"
-            "•✅ Возможность выбора <b>4-х любимых категорий каждый месяц с повышенным кэшбеком 15%</b>\n"
-            "•✅ Обслуживание бесплатно <b>при соблюдении следующих условий:</b> Если на карте, вкладах, накопительных и брокерскихсчетах каждый день в сумме хранится не менее 50000₽, в остальных случаях 99руб в месяц\n"
-            "•✅ Бесплатное снятие наличных в банкоматах <b>Т-Банк</b> на любую сумму до 500000₽ в месяц, в остальных банкоматах — <b>от 3000₽ до 100000₽</b>\n"
-            "•✅ Переводы без комиссии в другой банк по номеру карты или номеру телефона до 20000₽ в месяц, <b>с СБП без комиссии</>\n"
-            "•✅ Мультифункциональное приложение, а также круглосуточную поддержку\n\n"
-
+            "•✅ <b>500 рублей</b> на счёт карты после первой покупки\n"
+            "•✅ <b>60 дней бесплатного обслуживания</b> карты\n"
+            "•✅ <b>Участие в новогодней акции «Золотой Билет»</b> (до 24.12.2025)\n"
+            "•✅ Все преимущества Tinkoff Black\n\n"
+            
             "<i>⚠️ Внимательно ознакомьтесь с условиями выше.</i>\n\n"
             "<b>Вы согласны с условиями и готовы получить ссылку?</b>"
         )
