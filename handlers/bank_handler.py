@@ -106,6 +106,15 @@ async def send_bank_info_and_link(message: types.Message, state: FSMContext):
         await state.set_state(BankAgreement.waiting_agreement_alpha)
         await message.answer(desc, parse_mode="HTML", reply_markup=get_agreement_kb())
 
+@router.callback_query(F.data == "accept_from_details", StateFilter(BankAgreement.waiting_agreement))
+async def accept_from_details_tbank(callback: types.CallbackQuery, state: FSMContext):
+    await _process_tbank_agreement_internal(callback, state)
+
+# Обработка кнопки "Принимаю условия" из детальных условий для Альфа-Банка
+@router.callback_query(F.data == "accept_from_details", StateFilter(BankAgreement.waiting_agreement_alpha))
+async def accept_from_details_alpha(callback: types.CallbackQuery, state: FSMContext):
+    await _process_alpha_agreement_internal(callback, state)
+
 @router.callback_query(F.data == "agree_conditions", StateFilter(BankAgreement.waiting_agreement))
 async def process_tbank_agreement(callback: types.CallbackQuery, state: FSMContext):
     await _process_tbank_agreement_internal(callback, state)
