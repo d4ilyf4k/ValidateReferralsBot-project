@@ -226,10 +226,6 @@ async def show_detailed_conditions(callback: types.CallbackQuery, state: FSMCont
             "• Бонус начисляется до 10 рабочих дней\n"
             "• Карта доставляется бесплатно\n\n"
             
-            "<b>📌 Официальные правила:</b>\n"
-            "https://www.tinkoff.ru/about/promo/rules/500rub/\n\n"
-            
-            "<i>Вопросы: 8 800 555-77-78</i>"
         )
     else:
         detailed_text = (
