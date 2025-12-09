@@ -1,14 +1,8 @@
-from aiogram import Router, F, types
+from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from database.db_manager import create_user
-from utils.keyboards import get_phone_kb, get_bank_kb, get_user_main_menu_kb
-
-class Onboarding(StatesGroup):
-    full_name = State()
-    phone = State()
-    bank = State()
+from utils.keyboards import get_phone_kb, get_bank_kb
+from utils.states import Onboarding
 
 router = Router()
 
@@ -29,12 +23,3 @@ async def process_phone(message: Message, state: FSMContext):
     await state.update_data(phone=phone)
     await message.answer("Выберите банк:", reply_markup=get_bank_kb())
     await state.set_state(Onboarding.bank)
-
-@router.message(Onboarding.bank, F.text.in_(["🏦Т-Банк", "🏦Альфа-Банк"]))
-async def process_bank(message: types.Message, state: FSMContext):
-    bank_key = "t-bank" if message.text == "🏦Т-Банк" else "alpha"
-    await state.update_data(bank=bank_key)
-    data = await state.get_data()
-    await create_user(message.from_user.id, data["full_name"], data["phone"], bank_key)
-    await message.answer("✅ Регистрация завершена!", reply_markup=get_user_main_menu_kb())
-    await state.clear()

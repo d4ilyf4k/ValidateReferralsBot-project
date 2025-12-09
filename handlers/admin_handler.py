@@ -5,15 +5,16 @@ from config import settings
 from aiogram import Router, F, types
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from aiogram.filters import Command
-from typing import List
 from services.report_generator import generate_full_json_report
+from aiogram.fsm.context import FSMContext
 from database.db_manager import (
     get_user_by_phone,
     log_reminder_sent,
     update_referral_link,
-    delete_user_by_phone,
+    delete_user_all_data,
 )
 from utils.reminders import send_reminder_to_user
+from utils.keyboards import get_start_kb
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -51,54 +52,36 @@ async def handle_update_link_button(callback: CallbackQuery):
 
 
 @router.message(Command("update_link"))
-async def cmd_update_link(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("🚫 У вас нет прав на эту команду.")
-        return
-
-    args: List[str] = message.text.split()
-    if len(args) < 4:
-        await message.answer(
-            "❌ Неверный формат.\n"
-            "Используйте:\n"
-            "<code>/update_link [банк] [продукт] [ссылка] [utm-параметры...]</code>\n\n"
-            "<b>Пример:</b>\n"
-            "<code>/update_link t-bank black_aroma https://www.tbank.ru/finance/blog/aroma-black/ utm_source=bot</code>",
-            parse_mode="HTML"
+async def cmd_update_link(message: Message, state: FSMContext):
+    try:
+        parts = message.text.split()
+        if len(parts) < 7:
+            await message.answer("Формат: /update_link банк продукт url utm_source utm_medium utm_campaign [black_type]")
+            return
+        
+        bank = parts[1]          # t-bank или alpha
+        product_key = parts[2]   # black_classic, alpha_debit и т.д.
+        base_url = parts[3]      # URL
+        utm_source = parts[4]    # telegram
+        utm_medium = parts[5]    # referral  
+        utm_campaign = parts[6]  # default
+        
+        success = await update_referral_link(
+            bank=bank,
+            product_key=product_key,
+            base_url=base_url,
+            utm_source=utm_source,
+            utm_medium=utm_medium,
+            utm_campaign=utm_campaign,
         )
-        return
-
-    bank = args[1]
-    product_key = args[2]
-    base_url = args[3]
-
-    if bank not in {"t-bank", "alpha"}:
-        await message.answer("🏦 Поддерживаемые банки: <code>t-bank</code>, <code>alpha</code>", parse_mode="HTML")
-        return
-
-    if not base_url.startswith(("http://", "https://")):
-        await message.answer("🔗 Ссылка должна начинаться с <code>http://</code> или <code>https://</code>", parse_mode="HTML")
-        return
-
-    utm = {"utm_source": "telegram", "utm_medium": "referral", "utm_campaign": "default"}
-    for param in args[4:]:
-        if "=" in param:
-            key, value = param.split("=", 1)
-            if key in utm:
-                utm[key] = value
-
-    await update_referral_link(bank, product_key, base_url, utm["utm_source"], utm["utm_medium"], utm["utm_campaign"])
-
-    bank_name = "Т-Банка" if bank == "t-bank" else "Альфа-Банка"
-    await message.answer(
-        f"✅ Ссылка для {bank_name} обновлена!\n\n"
-        f"<b>Продукт:</b> <code>{product_key}</code>\n"
-        f"<b>Источник:</b> <code>{utm['utm_source']}</code>\n"
-        f"<b>Медиум:</b> <code>{utm['utm_medium']}</code>\n"
-        f"<b>Кампания:</b> <code>{utm['utm_campaign']}</code>\n\n"
-        f"<b>Ссылка:</b>\n<code>{base_url}</code>",
-        parse_mode="HTML"
-    )
+        
+        if success:
+            await message.answer(f"✅ Ссылка для {bank}/{product_key} обновлена!")
+        else:
+            await message.answer("❌ Ошибка при обновлении ссылки")
+            
+    except Exception as e:
+        await message.answer(f"Ошибка: {str(e)}")
 
 @router.message(Command("set_offer_bonus"))
 async def cmd_set_offer_bonus(message: Message):
@@ -284,32 +267,22 @@ async def cmd_remind(message: types.Message):
         logger.error(f"Ошибка отправки напоминания: {e}")
     
 @router.message(Command("delete_data"))
-async def cmd_delete_data(message: types.Message):
+async def cmd_delete_data(message: types.Message, state: FSMContext):
     """
-    Удаляет данные реферала по номеру телефона.
-    Использование: /delete_data +79161234567
+    Удаляет данные текущего пользователя и сбрасывает состояние.
+    Использование: /delete_data  → удалить себя
     """
-    if not is_admin(message.from_user.id):
-        return
+    user_id = message.from_user.id
 
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer(
-            "❌ Укажите номер телефона реферала:\n"
-            "<code>/delete_data +79161234567</code>",
-            parse_mode="HTML"
-        )
-        return
-
-    phone = args[1].strip()
-    success = await delete_user_by_phone(phone)
+    success = await delete_user_all_data(user_id)
     if success:
         await message.answer(
-            f"✅ Данные реферала с номером <code>{phone}</code> удалены.",
-            parse_mode="HTML"
+            "✅ Ваши данные удалены. Вы можете начать регистрацию заново.",
+            reply_markup=get_start_kb()  # или get_user_main_menu_kb(), как у вас
         )
+        await state.clear()  # сбрасываем состояние, чтобы можно было пройти онбординг снова
     else:
         await message.answer(
-            f"❌ Реферал с номером <code>{phone}</code> не найден.",
-            parse_mode="HTML"
+            "Вы не найдены в базе данных. Нажмите «Начать регистрацию», чтобы создать профиль.",
+            reply_markup=get_start_kb()
         )

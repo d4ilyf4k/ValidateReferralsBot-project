@@ -14,13 +14,12 @@ def is_valid_date(date_str: str) -> bool:
         return False
     
 def normalize_phone(phone: str) -> str:
-    digits = re.sub(r'\D', '', phone)
-    if digits.startswith('8'):
-        digits = '7' + digits[1:]
-    elif digits.startswith('7'):
-        pass
+    digits = re.sub(r"\D", "", phone)
+    
+    if len(digits) == 11:
+        if digits.startswith('7') or digits.startswith('8'):
+            return '7' + digits[1:]
     elif len(digits) == 10:
-        digits = '7' + digits
-    else:
-        return phone.strip()
-    return f'+{digits}'
+        return '7' + digits
+    
+    return digits

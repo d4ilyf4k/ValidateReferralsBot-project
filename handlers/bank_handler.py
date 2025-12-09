@@ -1,10 +1,9 @@
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import StateFilter
-from aiogram.types import Message
 from database.db_manager import get_referral_link, add_user_bank
 from services.bonus_calculator import recalculate_all_bonuses
+from utils.states import BankAgreement
 from utils.keyboards import (
     get_bank_kb,
     get_tbank_product_kb,
@@ -15,14 +14,6 @@ from utils.keyboards import (
 
 router = Router()
 
-
-class BankAgreement(StatesGroup):
-    choosing_bank = State()
-    choosing_tbank_product = State()
-    choosing_black_subtype = State()
-    waiting_agreement = State()
-
-
 @router.message(F.text == "🏦 Выбрать банк")
 async def choose_bank(message: types.Message, state: FSMContext):
     await state.set_state(BankAgreement.choosing_bank)
@@ -30,7 +21,6 @@ async def choose_bank(message: types.Message, state: FSMContext):
     
 @router.message(F.text == "🏦Т-Банк")
 async def select_tbank(message: types.Message, state: FSMContext):
-    # Не проверяем состояние — просто обрабатываем
     await state.update_data(bank_key="t-bank", user_id=message.from_user.id)
     await state.set_state(BankAgreement.choosing_tbank_product)
     await message.answer(
@@ -66,9 +56,9 @@ async def choose_tbank_product(callback: types.CallbackQuery, state: FSMContext)
 
     if product_key == "tbank_black":
         await state.set_state(BankAgreement.choosing_black_subtype)
-        await callback.message.edit_text(
+        await callback.message.answer(
             "<b>Выберите тип Tinkoff Black:</b>\n\n"
-            "🔷 <b>Classic</b> — участвует в новогодней акции «Золотой Билет»\n"
+            "🔷 <b>Дебетовая карта Т-Банка</b> — участвует в новогодней акции «Золотой Билет»\n"
             "🌸 <b>Аромакарта</b> — пахнет шоколадом и кокосом\n"
             "🎓 <b>Молодёжная</b> — для 14–25 лет, 1% за всё\n"
             "📼 <b>Ретро</b> — ностальгия по 2000-м",
@@ -98,15 +88,21 @@ async def choose_tbank_product(callback: types.CallbackQuery, state: FSMContext)
 )
 async def choose_black_subtype(callback: types.CallbackQuery, state: FSMContext):
     mapping = {
-        "black_classic": "Tinkoff Black (Classic)",
-        "black_aroma": "Аромакарта Black",
-        "black_youth": "Молодёжная карта Black",
-        "black_retro": "Ретро-карта Black"
+        "black_classic": ("black_classic", "Tinkoff Black (Classic)"),
+        "black_aroma": ("black_aroma", "Аромакарта Black"),
+        "black_youth": ("black_youth", "Молодёжная карта Black"),
+        "black_retro": ("black_retro", "Ретро-карта Black")
     }
-    product_key = callback.data
-    product_name = mapping[product_key]
-    await state.update_data(product_key=product_key, product_name=product_name)
-    await show_final_conditions(callback, state, product_key, product_name)
+    
+    if callback.data in mapping:
+        product_key, product_name = mapping[callback.data]
+        await state.update_data(
+            product_key=product_key,
+            product_name=product_name,
+            black_subtype=callback.data
+        )
+        await show_final_conditions(callback, state, product_key, product_name)
+    
     await callback.answer()
 
 
@@ -124,7 +120,7 @@ async def process_agreement(callback: types.CallbackQuery, state: FSMContext):
     product_key = data["product_key"]
     product_name = data["product_name"]
 
-    await add_user_bank(user_id, bank_key, product_key, product_name, None)
+    await add_user_bank(user_id, bank_key, product_key, product_name)
     await recalculate_all_bonuses(user_id)
 
     link = await get_referral_link(bank_key, product_key)
@@ -141,6 +137,37 @@ async def process_agreement(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
 
+@router.callback_query(F.data == "disagree_conditions", StateFilter(BankAgreement.waiting_agreement))
+async def process_disagreement(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    bank_key = data.get("bank_key", "t-bank")
+    product_key = data.get("product_key", "black_classic")
+
+    if bank_key == "t-bank" and product_key == "black_classic":
+        text = (
+            "❌ Вы отказались от получения ссылки.\n\n"
+            "🎄 <b>Напоминаем:</b> новогодняя акция «Золотой Билет» действует "
+            "только до <b>24.12.2025</b>!\n"
+            "Если оформите карту Tinkoff Black и совершите покупку от 500 ₽ — "
+            "получите кэшбэк на сладости и шанс выиграть до 5 000 000 ₽.\n\n"
+            "Вы можете вернуться и согласиться в любой момент."
+        )
+    else:
+        if bank_key == "t-bank":
+            text = (
+                "❌ Вы отказались от получения ссылки.\n\n"
+                "Вы можете выбрать другой продукт Т‑Банка или вернуться в главное меню."
+            )
+        else:
+            text = (
+                "❌ Вы отказались от получения ссылки.\n\n"
+                "Вы можете выбрать другой банк или вернуться в главное меню."
+            )
+
+    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.message.answer("Главное меню:", reply_markup=get_user_main_menu_kb())
+    await state.clear()
+    await callback.answer()
 
 def _get_conditions_text(product_key: str, product_name: str) -> str:
     base = f"<b>🏦 {product_name}</b>\n\n"
@@ -231,23 +258,24 @@ def _get_conditions_text(product_key: str, product_name: str) -> str:
         return base + (
             "<b>🚗 Всё для тех, кто за рулём — за счёт банка</b>\n\n"
 
-            "Оформите дебетовую карту Drive и получите:\n"
-            "• Кэшбэк на АЗС, парковки, автомойки, шиномонтаж, запчасти, ремонт\n"
-            "• Бонус **2000 ₽** за покупки от 5000 ₽ в течение первых 30 дней\n"
-            "• Бесплатный выпуск и доставка карты\n"
-            "• Удобное приложение: всё для авто в одном месте\n\n"
+            "<b>🎁 Что вы получаете:</b>\n"
+            "• Кэшбэк до 10% на АЗС, парковки, автомойки, шиномонтаж, запчасти, ремонт\n"
+            "• Бесплатный выпуск и доставка\n"
+            "• Бесплатные переводы и снятие без комиссии\n"
+            "• Удобное приложение: оплата парковок, топлива, страхования — всё в одном месте\n\n"
 
-            "🎄 <b>Акция по промокоду 123GO:</b>\n"
-            "• Совершите покупки на сумму от 5000 ₽ в течение 30 дней с даты активации карты\n"
+            "🎄 <b>Специальная акция по промокоду 123GO:</b>\n"
+            "• Совершите покупки на сумму от <b>5000 ₽</b> в течение <b>30 дней</b> с даты активации карты\n"
+            "• Получите <b>2000 бонусов</b> на счёт\n"
             "• Условие: у вас нет и не было других дебетовых карт Т‑Банка в течение последнего года\n"
-            "• Срок действия промокода: до 31.12.2025\n\n"
+            "• Срок действия промокода: <b>до 31.12.2025</b>\n\n"
 
             "<b>📋 Условия активации:</b>\n"
-            "• Оформить карту Drive\n"
+            "• Оформить дебетовую карту Drive\n"
             "• Активировать карту\n"
-            "• Совершить покупки на сумму от 5000 ₽ в течение 30 дней\n\n"
+            "• Выполнить условия акции (если используете промокод)\n\n"
 
-            "<b>⏱️ Бонус 2000 ₽ поступит на счёт автоматически</b> после выполнения условий."
+            "<b>⏱️ Бонус поступит на счёт автоматически в течение 10 рабочих дней.</b>"
         )
 
     elif product_key == "tbank_mobile":

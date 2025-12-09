@@ -1,19 +1,7 @@
 import json
-import aiosqlite
 from datetime import datetime
 from database.db_manager import decrypt_phone, get_all_referrals_data, get_all_offer_net_bonuses
 from services.bonus_calculator import is_bonus_confirmed, calculate_your_bonus
-
-def format_optional_date(date_val):
-    if not date_val:
-        return "—"
-    if isinstance(date_val, str):
-        try:
-            year, month, day = date_val.split("-")
-            return f"{day}.{month}.{year}"
-        except:
-            return str(date_val)
-    return str(date_val)
 
 def generate_referral_json(user_data: dict) -> str:
     try:
@@ -45,7 +33,7 @@ def generate_referral_json(user_data: dict) -> str:
         },
         "financial_info": {
             "total_referral_bonus": referral_bonus,
-            "referral_bonus_received": bonus_confirmed,  # или отдельное поле даты
+            "referral_bonus_received": bonus_confirmed,
             "total_your_bonus": your_bonus,
             "your_bonus_status": "confirmed" if bonus_confirmed else "pending"
         }
@@ -53,17 +41,26 @@ def generate_referral_json(user_data: dict) -> str:
     return json.dumps(report, ensure_ascii=False, indent=2)
 
 def format_optional_date(date_val):
-    """Форматирует дату в DD.MM.YYYY или '—' если пусто."""
     if not date_val:
         return "—"
+    
     try:
-        if isinstance(date_val, str) and len(date_val) == 10 and "-" in date_val:
-            year, month, day = date_val.split("-")
+        if isinstance(date_val, str) and len(date_val) == 10 and date_val.count('-') == 2:
+            year, month, day = date_val.split('-')
             return f"{day}.{month}.{year}"
+        
+        elif isinstance(date_val, str) and len(date_val) == 10 and date_val.count('.') == 2:
+            return date_val
+        
         elif hasattr(date_val, "strftime"):
             return date_val.strftime("%d.%m.%Y")
+        
+        elif isinstance(date_val, str):
+            return date_val
+        
         else:
             return str(date_val)
+            
     except Exception:
         return str(date_val)
 
@@ -93,13 +90,26 @@ async def generate_full_json_report() -> str:
         for row in raw_data:
             user = dict(row)
             
-            phone = "[нет телефона]"
-            if 'phone_enc' in user and user['phone_enc']:
+            phone_enc = user.get('phone_enc')
+            if phone_enc:
                 try:
-                    phone = decrypt_phone(user['phone_enc'])
-                except Exception:
-                    phone = "[ошибка расшифровки]"
-            user['phone'] = phone
+                    if isinstance(phone_enc, bytes):
+                        user['phone'] = decrypt_phone(phone_enc)
+                    elif isinstance(phone_enc, str):
+                        try:
+                            import base64
+                            decoded_bytes = base64.b64decode(phone_enc)
+                            user['phone'] = decrypt_phone(decoded_bytes)
+                        except:
+                            user['phone'] = phone_enc
+                    else:
+                        user['phone'] = decrypt_phone(phone_enc)
+                except Exception as e:
+                    print(f"⚠️ Ошибка расшифровки телефона для user_id={user.get('user_id')}: {e}")
+                    user['phone'] = "[ошибка расшифровки]"
+            else:
+                user['phone'] = user.get('phone') or "[нет телефона]"
+                
             user.pop('phone_enc', None)
 
             banks = user.get('banks', [])
@@ -108,8 +118,8 @@ async def generate_full_json_report() -> str:
             user['banks'] = banks
 
             product_key = user.get('selected_product')
-
             potential_net = 0
+            
             for bank in banks:
                 key = (bank, product_key)
                 net_bonus = offer_net_bonuses.get(key, 0)
@@ -131,11 +141,27 @@ async def generate_full_json_report() -> str:
 
             user['bonus_status'] = "confirmed" if confirmed_bonus > 0 else "pending"
 
-            for date_field in ['created_at', 'card_activated_date', 'first_purchase_date']:
-                if date_field in user:
-                    user[date_field] = format_optional_date(user[date_field])
+            date_fields = [
+                'created_at', 
+                'application_date', 
+                'approval_date', 
+                'card_received_date',
+                'card_activated_date',
+                'first_purchase_date',
+                'sent_at'
+            ]
+            
+            for date_field in date_fields:
+                if date_field in user and user[date_field]:
+                    date_value = str(user[date_field]).strip()
+                    if date_value and date_value != 'None' and date_value != 'null':
+                        user[date_field] = format_optional_date(date_value)
+                    else:
+                        user[date_field] = "—"
+                elif date_field in user:
+                    user[date_field] = "—"
 
-            for key in ['selected_product', 'selected_product_name', 'bank']:
+            for key in ['selected_product', 'selected_product_name', 'bank', 'primary_bank']:
                 user.pop(key, None)
 
             processed_users.append(user)
@@ -144,9 +170,9 @@ async def generate_full_json_report() -> str:
             "generated_at": datetime.now().isoformat(),
             "total_users": len(processed_users),
             "summary": {
-                "total_potential_earnings_gross": total_gross,      # до налогов
-                "total_potential_earnings_net": total_net,          # после 6% НПД
-                "total_confirmed_earnings_net": total_confirmed_net,  # ваш реальный чистый доход
+                "total_potential_earnings_gross": total_gross,
+                "total_potential_earnings_net": total_net,
+                "total_confirmed_earnings_net": total_confirmed_net,
                 "total_referrals": len(processed_users)
             },
             "users": processed_users
@@ -159,11 +185,9 @@ async def generate_full_json_report() -> str:
         import traceback
         traceback.print_exc()
         raise
-    
+
 async def generate_referral_text_report_with_conditions(user_data: dict) -> str:
 
-
-    
     try:
         phone = decrypt_phone(user_data["phone_enc"])
     except Exception:
@@ -172,7 +196,7 @@ async def generate_referral_text_report_with_conditions(user_data: dict) -> str:
     from database.db_manager import get_user_banks
     banks = await get_user_banks(user_data["user_id"])
     if not banks:
-        banks = [user_data.get("bank", "t-bank")]  # fallback для старых пользователей
+        banks = [user_data.get("bank", "t-bank")]
 
     bonus_lines = []
     total_bonus = 0

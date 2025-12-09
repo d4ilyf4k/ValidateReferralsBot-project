@@ -1,12 +1,23 @@
-from aiogram import Router, F, types
 from config import settings
+from datetime import datetime
+from aiogram import Router, F, types
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, BufferedInputFile
 from aiogram.filters import StateFilter
+from database.db_manager import (
+        update_progress_field, 
+        get_user_by_phone, 
+        log_reminder_sent, 
+        get_user_full_data,
+        get_all_referrals_data,
+        decrypt_phone
+)
 from handlers.onboarding_handler import Onboarding
 from handlers.profile_handler import ProfileEdit
 from handlers.admin_handler import send_reminder_to_user
+from handlers.finance_handler import show_finance_report
+from handlers.bank_handler import _get_detailed_conditions_text, _get_conditions_text
 from utils.keyboards import (
     get_phone_kb,
     get_bank_kb,
@@ -18,21 +29,12 @@ from utils.keyboards import (
     get_detailed_back_kb,
 )
 from utils.validation import is_valid_date
-from database.db_manager import (
-        update_progress_field, 
-        get_user_by_phone, 
-        log_reminder_sent, 
-        get_user_full_data,
-        get_all_referrals_data,
-        decrypt_phone
-)
+from utils.states import BankAgreement
+
 from services.report_generator import (
     generate_referral_text_report_with_conditions, 
     )
 from services.bonus_calculator import recalculate_all_bonuses
-from handlers.finance_handler import show_finance_report
-from handlers.bank_handler import BankAgreement, _get_detailed_conditions_text, _get_conditions_text
-
 
 router = Router()
 
@@ -110,18 +112,21 @@ async def back_to_phone(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Отправьте номер телефона:", reply_markup=get_phone_kb())
     await state.set_state(Onboarding.phone)
 
-@router.callback_query(F.data == "back_to_bank")
-async def back_to_bank(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "back_to_banks")
+async def back_to_banks(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("Выберите банк:", reply_markup=get_bank_kb())
     await state.set_state(Onboarding.bank)
 
-@router.callback_query(ProfileEdit.application_submitted, F.data.startswith("yesno_"))
-async def handle_app_submitted_choice(callback: CallbackQuery, state: FSMContext):
-    value = callback.data == "yesno_app_submitted_yes"
-    await update_progress_field(callback.from_user.id, "application_submitted", value)
+@router.callback_query(ProfileEdit.card_activated, F.data.startswith("yesno_"))
+async def handle_card_activated_choice(callback: CallbackQuery, state: FSMContext):
+    value = callback.data == "yesno_card_act_yes"
+    await update_progress_field(callback.from_user.id, "card_activated", value)
     if value:
-        await callback.message.answer("Укажите дату подачи заявки (ДД.ММ.ГГГГ):")
-        await state.set_state(ProfileEdit.application_date)
+        current_date = datetime.now().strftime("%d.%m.%Y")
+        await update_progress_field(callback.from_user.id, "card_activated_date", current_date)
+    if value:
+        await callback.message.answer("Укажите дату активации карты (ДД.ММ.ГГГГ):")
+        await state.set_state(ProfileEdit.card_activated_date)
     else:
         await _finalize_profile_edit(callback, state)
 
@@ -136,20 +141,31 @@ async def process_app_date(message: types.Message, state: FSMContext):
 @router.callback_query(ProfileEdit.card_activated, F.data.startswith("yesno_"))
 async def handle_card_activated_choice(callback: CallbackQuery, state: FSMContext):
     value = callback.data == "yesno_card_act_yes"
+    
     await update_progress_field(callback.from_user.id, "card_activated", value)
+    
     if value:
-        await callback.message.answer("Укажите дату активации карты (ДД.ММ.ГГГГ):")
+        current_date = datetime.now().strftime("%d.%m.%Y")
+        await update_progress_field(callback.from_user.id, "card_activated_date", current_date)
+        print(f"📅 Установлена дата активации: {current_date}")
+    
+    if value:
+        await callback.message.answer(f"Дата активации установлена: {current_date}\nХотите изменить дату? (ДД.ММ.ГГГГ) или нажмите 'Пропустить':")
         await state.set_state(ProfileEdit.card_activated_date)
     else:
         await _finalize_profile_edit(callback, state)
 
 @router.message(ProfileEdit.card_activated_date)
 async def process_card_activated_date(message: types.Message, state: FSMContext):
-    if is_valid_date(message.text):
+    if message.text.lower() == "пропустить":
+        pass
+    elif is_valid_date(message.text):
         await update_progress_field(message.from_user.id, "card_activated_date", message.text)
-        await _finalize_profile_edit(message, state)
+        print(f"📅 Пользователь изменил дату активации на: {message.text}")
     else:
-        await message.answer("Неверная дата. Формат: ДД.ММ.ГГГГ")
+        await message.answer("Неверная дата. Формат: ДД.ММ.ГГГГ или напишите 'Пропустить'")
+        return
+    await _finalize_profile_edit(message, state)
 
 
 async def _finalize_profile_edit(obj, state: FSMContext):
@@ -183,41 +199,6 @@ async def handle_edit_field(callback: CallbackQuery, state: FSMContext):
     else:
         await callback.answer("Функция временно недоступна.", show_alert=True)
     await callback.answer()
-
-
-@router.callback_query(F.data.startswith("black_"), StateFilter(BankAgreement.choosing_black_subtype))
-async def process_black_type_selection(callback: types.CallbackQuery, state: FSMContext):
-    if callback.data == "black_drive":
-        product_key = "drive"
-        product_name = "дебетовую карту Drive"
-        black_type_name = "Карта Drive"
-    
-    elif callback.data == "black_premium":
-        product_key = "tbank_premium"
-        product_name = "премиальную карту Tinkoff Black Premium"
-        black_type_name = "Премиум-карта"
-        
-    else:
-        product_key = "tbank_black"
-        type_map = {
-            "black_classic": "Классическая карта (пластик)",
-            "black_aroma": "Аромакарта (металл)",
-            "black_youth": "Молодёжная карта",
-            "black_retro": "Карта в ретро-дизайне",
-        }
-        black_type_name = type_map.get(callback.data, "Классическая карта (пластик)")
-        product_name = "Tinkoff Black"
-
-    await state.update_data(
-        black_type=callback.data,
-        black_type_name=black_type_name,
-        product_key=product_key,
-        product_name=product_name
-    )
-
-    await show_product_conditions(callback, state, product_key, product_name)
-    await callback.answer()
-
 
 async def show_product_conditions(
     callback: types.CallbackQuery, 
@@ -334,8 +315,21 @@ async def process_finance_referral_phone(message: types.Message, state: FSMConte
     if not user:
         await message.answer("❌ Реферал не найден.")
     else:
-        report = generate_referral_text_report_with_conditions(user)
+        report = await generate_referral_text_report_with_conditions(user)
         await message.answer(report, parse_mode="HTML")
+    await state.clear()
+
+@router.message(AdminStates.find_phone)
+async def process_find_phone(message: types.Message, state: FSMContext):
+    phone = message.text.strip()
+    user = await get_user_by_phone(phone)
+
+    if not user:
+        await message.answer("❌ Реферал с таким номером не найден.")
+    else:
+        report = await generate_referral_text_report_with_conditions(user)
+        await message.answer(report, parse_mode="HTML")
+
     await state.clear()
 
 @router.callback_query(F.data == "admin_remind")
@@ -378,20 +372,7 @@ async def start_admin_find_phone(callback: types.CallbackQuery, state: FSMContex
     await callback.answer()
     await callback.message.answer("📱 Введите номер телефона реферала (например, +79161234567):")
     await state.set_state(AdminStates.find_phone)
-    
-@router.message(AdminStates.find_phone)
-async def process_find_phone(message: types.Message, state: FSMContext):
-    phone = message.text.strip()
-    user = await get_user_by_phone(phone)
 
-    if not user:
-        await message.answer("❌ Реферал с таким номером не найден.")
-    else:
-        report = generate_referral_text_report_with_conditions(user)
-        await message.answer(report, parse_mode="HTML")
-
-    await state.clear()
-    
 @router.callback_query(F.data == "admin_update_links")
 async def admin_update_links(callback: types.CallbackQuery):
     if callback.from_user.id not in settings.ADMIN_IDS:

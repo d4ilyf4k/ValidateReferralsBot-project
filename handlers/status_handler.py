@@ -1,5 +1,4 @@
 from aiogram import Router, F, types
-from aiogram.filters import Command
 from database.db_manager import get_user_full_data, get_user_banks
 from services.bonus_calculator import is_bonus_confirmed, get_referral_bonus
 

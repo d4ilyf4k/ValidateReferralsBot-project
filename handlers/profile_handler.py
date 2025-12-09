@@ -1,6 +1,6 @@
 from aiogram import Router, F, types
+from datetime import datetime
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from database.db_manager import get_user_full_data, update_user_field, update_progress_field
 from services.bonus_calculator import recalculate_all_bonuses
 from config import settings
@@ -12,19 +12,10 @@ from utils.keyboards import (
     get_user_main_menu_kb,
     get_admin_main_menu_kb
 )
+from utils.states import ProfileEdit
+from .callback_handlers import _finalize_profile_edit
 
 router = Router()
-
-class ProfileEdit(StatesGroup):
-    full_name = State()
-    phone = State()
-    bank = State()
-    card_activated = State()
-    card_activated_date = State()
-    purchase_made = State()
-    application_submitted = State()
-    application_date = State()
-    card_last4 = State()
 
 @router.message(F.text == "✏️ Редактировать профиль")
 async def edit_profile(message: types.Message):
@@ -77,7 +68,7 @@ async def process_phone(message: types.Message, state: FSMContext):
     await update_user_field(message.from_user.id, "phone", phone)
     await finalize_edit(message, state)
 
-@router.message(ProfileEdit.bank, F.text.in_({"Т-Банк", "Альфа-Банк"}))
+@router.message(ProfileEdit.bank, F.text.in_({"🏦Т-Банк", "🏦Альфа-Банк"}))
 async def process_bank(message: types.Message, state: FSMContext):
     bank_map = {"Т-Банк": "t-bank", "Альфа-Банк": "alpha"}
     bank = bank_map[message.text]
@@ -87,14 +78,28 @@ async def process_bank(message: types.Message, state: FSMContext):
 @router.callback_query(ProfileEdit.card_activated, F.data.startswith("yesno_card_act"))
 async def process_card_activated(callback: types.CallbackQuery, state: FSMContext):
     value = callback.data == "yesno_card_act_yes"
+    
     await update_progress_field(callback.from_user.id, "card_activated", value)
-    await finalize_edit(callback, state)
+    
+    if value:
+        current_date = datetime.now().strftime("%d.%m.%Y")
+        await update_progress_field(callback.from_user.id, "card_activated_date", current_date)
+        print(f"✅ Установлена дата активации: {current_date} для user_id={callback.from_user.id}")
+    
+    await _finalize_profile_edit(callback, state)
 
 @router.callback_query(ProfileEdit.purchase_made, F.data.startswith("yesno_purchase"))
 async def process_purchase_made(callback: types.CallbackQuery, state: FSMContext):
     value = callback.data == "yesno_purchase_yes"
+    
     await update_progress_field(callback.from_user.id, "purchase_made", value)
-    await finalize_edit(callback, state)
+    
+    if value:
+        current_date = datetime.now().strftime("%d.%m.%Y")
+        await update_progress_field(callback.from_user.id, "first_purchase_date", current_date)
+        print(f"✅ Установлена дата покупки: {current_date} для user_id={callback.from_user.id}")
+    
+    await _finalize_profile_edit(callback, state)
     
 @router.message(ProfileEdit.card_last4)
 async def process_card_last4(message: types.Message, state: FSMContext):

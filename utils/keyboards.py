@@ -1,4 +1,3 @@
-from aiogram import types
 from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
@@ -119,16 +118,16 @@ def get_detailed_conditions_kb() -> InlineKeyboardMarkup:
         
 def get_tbank_product_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔷 Tinkoff Black", callback_data="tbank_black")],
+        [InlineKeyboardButton(text="🔷 Т-Банк Black", callback_data="tbank_black")],
         [InlineKeyboardButton(text="🏆 Premium", callback_data="tbank_premium")],
         [InlineKeyboardButton(text="🚗 Drive", callback_data="tbank_drive")],
-        [InlineKeyboardButton(text="📱 T-Mobile", callback_data="tbank_mobile")],
+        [InlineKeyboardButton(text="📱 T-Мобайл", callback_data="tbank_mobile")],
         [InlineKeyboardButton(text="↩️ Назад к выбору банка", callback_data="back_to_banks")]
     ])
 
 def get_black_subtype_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔷 Classic", callback_data="black_classic")],
+        [InlineKeyboardButton(text="🔷 Классическая", callback_data="black_classic")],
         [InlineKeyboardButton(text="🌸 Аромакарта", callback_data="black_aroma")],
         [InlineKeyboardButton(text="🎓 Молодёжная", callback_data="black_youth")],
         [InlineKeyboardButton(text="📼 Ретро", callback_data="black_retro")],

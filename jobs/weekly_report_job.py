@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from aiogram import Bot, types
+from aiogram import Bot
 from aiogram.types import BufferedInputFile
 from config import settings
 from services.report_generator import generate_full_json_report
