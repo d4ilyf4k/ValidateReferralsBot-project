@@ -1,9 +1,10 @@
+from aiogram import types
 from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton
-)
+    )
 
 def get_start_kb():
     return ReplyKeyboardMarkup(
@@ -79,8 +80,7 @@ def get_yes_no_kb(prefix: str):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Да", callback_data=f"yesno_{prefix}_yes"),
-            InlineKeyboardButton(text="❌ Нет", callback_data=f"yesno_{prefix}_no")
-        ]
+            InlineKeyboardButton(text="❌ Нет", callback_data=f"yesno_{prefix}_no")]
     ])
             
     
@@ -91,7 +91,7 @@ def get_admin_panel_kb():
         [InlineKeyboardButton(text="🔍 Найти реферала", callback_data="admin_find_phone")],
         [InlineKeyboardButton(text="📨 Отправить напоминание", callback_data="admin_remind")],
         [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_back")]
-        ])
+    ])
 
 def get_agreement_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -101,14 +101,41 @@ def get_agreement_kb() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="❌ Нет, отклонить", callback_data="disagree_conditions")
-        ]],
-        resize_keyboard=True,
-        one_time_keyboard=True                            
-    )
+        ]
+    ])
+
+def get_detailed_back_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад к условиям", callback_data="back_to_summary")],
+        [InlineKeyboardButton(text="✅ Да, согласен", callback_data="agree_conditions")],
+        [InlineKeyboardButton(text="❌ Нет, отклонить", callback_data="disagree_conditions")]
+    ])
 
 def get_detailed_conditions_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Принимаю условия", callback_data="agree_conditions")],
         [InlineKeyboardButton(text="↩️ Назад к условиям", callback_data="back_to_main")]],
-        resize_keyboard=True,
     )
+        
+def get_tbank_product_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔷 Tinkoff Black", callback_data="tbank_black")],
+        [InlineKeyboardButton(text="🏆 Premium", callback_data="tbank_premium")],
+        [InlineKeyboardButton(text="🚗 Drive", callback_data="tbank_drive")],
+        [InlineKeyboardButton(text="📱 T-Mobile", callback_data="tbank_mobile")],
+        [InlineKeyboardButton(text="↩️ Назад к выбору банка", callback_data="back_to_banks")]
+    ])
+
+def get_black_subtype_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔷 Classic", callback_data="black_classic")],
+        [InlineKeyboardButton(text="🌸 Аромакарта", callback_data="black_aroma")],
+        [InlineKeyboardButton(text="🎓 Молодёжная", callback_data="black_youth")],
+        [InlineKeyboardButton(text="📼 Ретро", callback_data="black_retro")],
+    ])
+
+def get_product_confirmation_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, подтверждаю", callback_data="confirm_product"),
+        InlineKeyboardButton(text="✏️ Изменить выбор", callback_data="change_product")]
+    ])

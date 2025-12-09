@@ -1,5 +1,7 @@
 import json
-from database.db_manager import decrypt_phone, get_all_referrals_data
+import aiosqlite
+from datetime import datetime
+from database.db_manager import decrypt_phone, get_all_referrals_data, get_all_offer_net_bonuses
 from services.bonus_calculator import is_bonus_confirmed, calculate_your_bonus
 
 def format_optional_date(date_val):
@@ -20,7 +22,7 @@ def generate_referral_json(user_data: dict) -> str:
         phone = "[ошибка расшифровки]"
 
     bank = user_data["bank"]
-    your_bonus = 500 if bank == "t-bank" else 700
+    your_bonus = 500 if bank == "t-bank" else 500
     referral_bonus = 1000 if bank == "t-bank" else 1500
 
     card_activated = bool(user_data.get("card_activated", False))
@@ -50,58 +52,108 @@ def generate_referral_json(user_data: dict) -> str:
     }
     return json.dumps(report, ensure_ascii=False, indent=2)
 
+def format_optional_date(date_val):
+    """Форматирует дату в DD.MM.YYYY или '—' если пусто."""
+    if not date_val:
+        return "—"
+    try:
+        if isinstance(date_val, str) and len(date_val) == 10 and "-" in date_val:
+            year, month, day = date_val.split("-")
+            return f"{day}.{month}.{year}"
+        elif hasattr(date_val, "strftime"):
+            return date_val.strftime("%d.%m.%Y")
+        else:
+            return str(date_val)
+    except Exception:
+        return str(date_val)
+
 async def generate_full_json_report() -> str:
-    """Генерирует полный JSON отчет."""
-    from datetime import datetime
-    
     try:
         raw_data = await get_all_referrals_data(include_financial=True)
-        
         if not raw_data:
             return json.dumps({
                 "generated_at": datetime.now().isoformat(),
                 "total_users": 0,
+                "summary": {
+                    "total_potential_earnings_gross": 0,
+                    "total_potential_earnings_net": 0,
+                    "total_confirmed_earnings_net": 0,
+                    "total_referrals": 0
+                },
                 "users": []
             }, ensure_ascii=False, indent=2)
-        
+
+        offer_net_bonuses = await get_all_offer_net_bonuses()
+
         processed_users = []
+        total_gross = 0
+        total_net = 0
+        total_confirmed_net = 0
+
         for row in raw_data:
             user = dict(row)
             
+            phone = "[нет телефона]"
+            if 'phone_enc' in user and user['phone_enc']:
+                try:
+                    phone = decrypt_phone(user['phone_enc'])
+                except Exception:
+                    phone = "[ошибка расшифровки]"
+            user['phone'] = phone
+            user.pop('phone_enc', None)
+
             banks = user.get('banks', [])
             if isinstance(banks, str):
                 banks = banks.split(',') if banks else []
-            
             user['banks'] = banks
-            
-            if 'bank' not in user and banks:
-                user['bank'] = banks[0] if banks else None
-            
-            if 'phone_enc' in user and user['phone_enc']:
-                user['phone'] = decrypt_phone(user['phone_enc'])
-                del user['phone_enc']
+
+            product_key = user.get('selected_product')
+
+            potential_net = 0
+            for bank in banks:
+                key = (bank, product_key)
+                net_bonus = offer_net_bonuses.get(key, 0)
+                potential_net += net_bonus
+
+            user['potential_earnings_net'] = potential_net
+            total_net += potential_net
+
+            gross_est = int(potential_net / 0.94) if potential_net else 0
+            user['potential_earnings_gross'] = gross_est
+            total_gross += gross_est
+
+            confirmed_bonus = user.get('total_your_bonus', 0)
+            if confirmed_bonus > 0:
+                user['confirmed_earnings_net'] = confirmed_bonus
+                total_confirmed_net += confirmed_bonus
             else:
-                user['phone'] = None
-                if 'phone_enc' in user:
-                    del user['phone_enc']
-            
-            bonus_details = user.get('bonus_details')
-            if bonus_details and isinstance(bonus_details, str):
-                try:
-                    user['bonus_details'] = json.loads(bonus_details)
-                except json.JSONDecodeError:
-                    pass
-            
+                user['confirmed_earnings_net'] = 0
+
+            user['bonus_status'] = "confirmed" if confirmed_bonus > 0 else "pending"
+
+            for date_field in ['created_at', 'card_activated_date', 'first_purchase_date']:
+                if date_field in user:
+                    user[date_field] = format_optional_date(user[date_field])
+
+            for key in ['selected_product', 'selected_product_name', 'bank']:
+                user.pop(key, None)
+
             processed_users.append(user)
-        
+
         result = {
             "generated_at": datetime.now().isoformat(),
             "total_users": len(processed_users),
+            "summary": {
+                "total_potential_earnings_gross": total_gross,      # до налогов
+                "total_potential_earnings_net": total_net,          # после 6% НПД
+                "total_confirmed_earnings_net": total_confirmed_net,  # ваш реальный чистый доход
+                "total_referrals": len(processed_users)
+            },
             "users": processed_users
         }
-        
+
         return json.dumps(result, ensure_ascii=False, indent=2, default=str)
-        
+
     except Exception as e:
         print(f"❌ Ошибка в generate_full_json_report: {e}")
         import traceback
@@ -110,6 +162,8 @@ async def generate_full_json_report() -> str:
     
 async def generate_referral_text_report_with_conditions(user_data: dict) -> str:
 
+
+    
     try:
         phone = decrypt_phone(user_data["phone_enc"])
     except Exception:

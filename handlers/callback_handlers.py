@@ -1,9 +1,9 @@
-import json
 from aiogram import Router, F, types
 from config import settings
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, BufferedInputFile
+from aiogram.filters import StateFilter
 from handlers.onboarding_handler import Onboarding
 from handlers.profile_handler import ProfileEdit
 from handlers.admin_handler import send_reminder_to_user
@@ -13,7 +13,9 @@ from utils.keyboards import (
     get_yes_no_kb,
     get_user_main_menu_kb,
     get_admin_main_menu_kb,
-    get_admin_panel_kb
+    get_admin_panel_kb, 
+    get_agreement_kb,
+    get_detailed_back_kb,
 )
 from utils.validation import is_valid_date
 from database.db_manager import (
@@ -29,6 +31,8 @@ from services.report_generator import (
     )
 from services.bonus_calculator import recalculate_all_bonuses
 from handlers.finance_handler import show_finance_report
+from handlers.bank_handler import BankAgreement, _get_detailed_conditions_text, _get_conditions_text
+
 
 router = Router()
 
@@ -179,6 +183,66 @@ async def handle_edit_field(callback: CallbackQuery, state: FSMContext):
     else:
         await callback.answer("Функция временно недоступна.", show_alert=True)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("black_"), StateFilter(BankAgreement.choosing_black_subtype))
+async def process_black_type_selection(callback: types.CallbackQuery, state: FSMContext):
+    if callback.data == "black_drive":
+        product_key = "drive"
+        product_name = "дебетовую карту Drive"
+        black_type_name = "Карта Drive"
+    
+    elif callback.data == "black_premium":
+        product_key = "tbank_premium"
+        product_name = "премиальную карту Tinkoff Black Premium"
+        black_type_name = "Премиум-карта"
+        
+    else:
+        product_key = "tbank_black"
+        type_map = {
+            "black_classic": "Классическая карта (пластик)",
+            "black_aroma": "Аромакарта (металл)",
+            "black_youth": "Молодёжная карта",
+            "black_retro": "Карта в ретро-дизайне",
+        }
+        black_type_name = type_map.get(callback.data, "Классическая карта (пластик)")
+        product_name = "Tinkoff Black"
+
+    await state.update_data(
+        black_type=callback.data,
+        black_type_name=black_type_name,
+        product_key=product_key,
+        product_name=product_name
+    )
+
+    await show_product_conditions(callback, state, product_key, product_name)
+    await callback.answer()
+
+
+async def show_product_conditions(
+    callback: types.CallbackQuery, 
+    state: FSMContext, 
+    product_key: str, 
+    product_name: str
+):
+    data = await state.get_data()
+    black_type_name = data.get("black_type_name", "")
+
+    conditions_text = _get_detailed_conditions_text(product_key, product_name, black_type_name)
+
+    await state.update_data(final_product_selection={
+        "product_key": product_key,
+        "product_name": product_name,
+        "black_type": black_type_name if product_key == "tbank_black" else None
+    })
+
+    await state.set_state(BankAgreement.waiting_agreement)
+
+    await callback.message.edit_text(
+        conditions_text,
+        parse_mode="HTML",
+        reply_markup=get_agreement_kb()
+    )
     
 @router.callback_query(F.data == "admin_report")
 async def admin_report(callback: types.CallbackQuery):
@@ -336,10 +400,20 @@ async def admin_update_links(callback: types.CallbackQuery):
     await callback.answer()
     await callback.message.answer(
         "📌 Отправьте команду в формате:\n"
-        "<code>/update_link t-bank https://tbank.ru/ref/123 utm_source=telegram utm_medium=referral utm_campaign=winter2025</code>\n\n"
-        "Поддерживаемые банки: <code>t-bank</code>, <code>alpha</code>",
+        "<code>/update_link [банк] [продукт] [ссылка] [utm-параметры...]</code>\n\n"
+        "<b>Пример:</b>\n"
+        "<code>/update_link t-bank black_aroma https://tbank.ru/aroma utm_source=bot utm_medium=ref</code>\n\n"
+        "<b>Поддерживаемые банки:</b> <code>t-bank</code>, <code>alpha</code>\n"
+        "<b>Продукты для t-bank:</b>\n"
+        "• <code>black_classic</code> — обычная Black\n"
+        "• <code>black_aroma</code> — аромакарта\n"
+        "• <code>black_youth</code> — молодёжная\n"
+        "• <code>black_retro</code> — ретро\n"
+        "• <code>black_premium</code> — premium\n"
+        "• <code>drive</code> — карта для авто\n"
+        "• <code>main</code> — fallback (не рекомендуется)",
         parse_mode="HTML"
-    )    
+    )
 
 @router.callback_query(F.data == "admin_back")
 async def admin_back(callback: types.CallbackQuery):
@@ -358,3 +432,31 @@ async def admin_back(callback: types.CallbackQuery):
         reply_markup=get_admin_main_menu_kb(),
         parse_mode="HTML"
     )
+
+@router.callback_query(F.data == "show_details", StateFilter(BankAgreement.waiting_agreement))
+async def show_details(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    product_key = data.get("product_key")
+    product_name = data.get("product_name", "продукт")
+
+    if not product_key:
+        await callback.answer("❌ Не удалось определить продукт.", show_alert=True)
+        return
+
+    detailed_text = _get_detailed_conditions_text(product_key, product_name)
+    await callback.message.edit_text(detailed_text, parse_mode="HTML", reply_markup=get_detailed_back_kb())
+    await callback.answer()
+    
+@router.callback_query(F.data == "back_to_summary", StateFilter(BankAgreement.waiting_agreement))
+async def back_to_summary(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    product_key = data.get("product_key")
+    product_name = data.get("product_name")
+
+    if not product_key:
+        await callback.answer("❌ Ошибка: продукт не выбран.", show_alert=True)
+        return
+
+    summary_text = _get_conditions_text(product_key, product_name)
+    await callback.message.edit_text(summary_text, parse_mode="HTML", reply_markup=get_agreement_kb())
+    await callback.answer()

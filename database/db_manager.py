@@ -78,8 +78,16 @@ async def init_db():
         ''')
         await db.execute('''
             CREATE TABLE IF NOT EXISTS referral_links (
-                bank TEXT PRIMARY KEY,
-                url TEXT NOT NULL
+                bank TEXT NOT NULL,
+                offer_id TEXT,
+                product_key TEXT NOT NULL DEFAULT 'main',
+                gross_bonus INTEGER DEFAULT 0,
+                net_bonus INTEGER DEFAULT 0,
+                url TEXT NOT NULL,
+                utm_source TEXT,
+                utm_medium TEXT,
+                utm_campaign TEXT,
+                PRIMARY KEY (bank, product_key)
             )
         ''')
 
@@ -93,6 +101,14 @@ async def init_db():
             await db.execute("ALTER TABLE referral_links ADD COLUMN utm_medium TEXT DEFAULT 'referral'")
         if "utm_campaign" not in referral_columns:
             await db.execute("ALTER TABLE referral_links ADD COLUMN utm_campaign TEXT DEFAULT 'default'")
+        if "offer_id" not in referral_columns:
+            await db.execute("ALTER TABLE referral_links ADD COLUMN offer_id TEXT")
+        if "gross_bonus" not in referral_columns:
+            await db.execute("ALTER TABLE referral_links ADD COLUMN gross_bonus INTEGER DEFAULT 0")
+        if "net_bonus" not in referral_columns:
+            await db.execute("ALTER TABLE referral_links ADD COLUMN net_bonus INTEGER DEFAULT 0")
+        if "product_key" not in referral_columns:
+            await db.execute("ALTER TABLE referral_links ADD COLUMN product_key TEXT NOT NULL DEFAULT 'main'")    
 
         cursor = await db.execute("PRAGMA table_info(financial_data)")
         financial_columns = {row[1] for row in await cursor.fetchall()}
@@ -136,12 +152,23 @@ async def user_exists(user_id: int) -> bool:
         cursor = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
         return await cursor.fetchone() is not None
 
-async def add_user_bank(user_id: int, bank: str):
+async def add_user_bank(user_id: int, bank: str, product_key: str = None, product_name: str = None, black_type: str = None):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT OR IGNORE INTO user_banks (user_id, bank) VALUES (?, ?)",
             (user_id, bank)
         )
+        cursor = await db.execute("PRAGMA table_info(users)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "selected_product" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN selected_product TEXT")
+        if "selected_product_name" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN selected_product_name TEXT")
+        await db.execute("""
+            UPDATE users 
+            SET selected_product = ?, selected_product_name = ?
+            WHERE user_id = ?
+        """, (product_key, product_name, user_id))
         await db.commit()
 
 async def get_user_banks(user_id: int) -> list[str]:
@@ -151,6 +178,20 @@ async def get_user_banks(user_id: int) -> list[str]:
             (user_id,)
         )
         return [row[0] for row in await cursor.fetchall()]
+
+async def set_offer_bonus(bank: str, product_key: str, gross_bonus: int):
+    net_bonus = int(gross_bonus * 0.94)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO referral_links (bank, product_key, gross_bonus, net_bonus)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(bank, product_key) 
+            DO UPDATE SET 
+                gross_bonus = excluded.gross_bonus,
+                net_bonus = excluded.net_bonus
+        """, (bank, product_key, gross_bonus, net_bonus))
+        await db.commit()
 
 async def get_user_full_data(user_id: int) -> Optional[Dict[str, Any]]:
     async with aiosqlite.connect(DB_PATH) as db:
@@ -198,13 +239,13 @@ async def get_user_financial_data(user_id: int):
             SELECT 
                 id,
                 user_id,
-                COALESCE(amount, 0) as amount,
                 COALESCE(total_referral_bonus, 0) as total_referral_bonus,
                 COALESCE(total_your_bonus, 0) as total_your_bonus,
                 COALESCE(total_bonus_status, 'pending') as total_bonus_status,
                 bonus_details,
-                created_at,
-                updated_at
+                COALESCE(referral_bonus_amount, 0) as referral_bonus_amount,
+                COALESCE(your_bonus_amount, 0) as your_bonus_amount,
+                COALESCE(your_bonus_status, 'pending') as your_bonus_status
             FROM financial_data 
             WHERE user_id = ?
         """, (user_id,))
@@ -318,6 +359,16 @@ async def update_financial_field(user_id: int, field: str, value):
         print(f"✅ Обновлено: {field} = {value} для user_id={user_id}")
         return True
 
+async def get_all_offer_net_bonuses() -> dict:
+    result = {}
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT bank, product_key, net_bonus FROM referral_links")
+        async for row in cursor:
+            key = (row["bank"], row["product_key"])
+            result[key] = row["net_bonus"] or 0
+    return result
+
 async def get_all_referrals_data(include_financial: bool = True):
     """Получаем данные всех рефералов с отладкой."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -411,7 +462,7 @@ async def get_finance_summary() -> Dict[str, int]:
         cursor = await db.execute("SELECT COUNT(*) FROM financial_data WHERE your_bonus_status = 'pending'")
         pending_count = (await cursor.fetchone())[0]
 
-        cursor = await db.execute("SELECT COALESCE(SUM(total_referral_bonus), 0) FROM financial_data WHERE referral_bonus_date IS NOT NULL")
+        cursor = await db.execute("SELECT COALESCE(SUM(total_referral_bonus), 0) FROM financial_data WHERE total_bonus_status = 'confirmed'")
         total_referral_paid = (await cursor.fetchone())[0]
 
         return {
@@ -428,17 +479,16 @@ async def get_finance_summary() -> Dict[str, int]:
             "pending_count": pending_count,
         }
 
-async def add_referral_link(bank: str, url: str, utm_source="telegram", utm_medium="referral"):
-    """Добавляет реферальную ссылку для банка."""
+async def add_referral_link(bank: str, product_key: str, url: str, utm_source="telegram", utm_medium="referral", utm_campaign="default"):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             INSERT OR REPLACE INTO referral_links 
-            (bank, url, utm_source, utm_medium, utm_campaign) 
-            VALUES (?, ?, ?, ?, 'default')
-        """, (bank, url, utm_source, utm_medium))
+            (bank, product_key, url, utm_source, utm_medium, utm_campaign) 
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (bank, product_key, url, utm_source, utm_medium, utm_campaign))
         await db.commit()
 
-async def get_referral_link(bank: str) -> str | None:
+async def get_referral_link(bank: str, product_key: str = "main") -> str | None:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -449,25 +499,22 @@ async def get_referral_link(bank: str) -> str | None:
                 COALESCE(utm_medium, 'referral') as utm_medium,
                 COALESCE(utm_campaign, 'default') as utm_campaign
             FROM referral_links 
-            WHERE bank = ?
+            WHERE bank = ? AND product_key = ?
             """,
-            (bank,)
+            (bank, product_key)
         )
         row = await cursor.fetchone()
         if not row:
             return None
 
-        # Строим UTM-ссылку
         parsed = urlparse(row["url"])
         query_params = parse_qs(parsed.query) if parsed.query else {}
         query_params = {k: v[0] if v else '' for k, v in query_params.items()}
         
-        if "utm_source" not in query_params:
-            query_params["utm_source"] = row["utm_source"]
-        if "utm_medium" not in query_params:
-            query_params["utm_medium"] = row["utm_medium"]
-        if "utm_campaign" not in query_params:
-            query_params["utm_campaign"] = row["utm_campaign"]
+        query_params.setdefault("utm_source", row["utm_source"])
+        query_params.setdefault("utm_medium", row["utm_medium"])
+        query_params.setdefault("utm_campaign", row["utm_campaign"])
+        
         new_query = urlencode(query_params, safe='/:')
         return urlunparse((
             parsed.scheme,
@@ -478,34 +525,34 @@ async def get_referral_link(bank: str) -> str | None:
             parsed.fragment
         ))
 
-async def update_referral_link(bank: str, base_url: str, utm_source: str, utm_medium: str, utm_campaign: str):
+async def update_referral_link(bank: str, product_key: str, base_url: str, utm_source: str, utm_medium: str, utm_campaign: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             INSERT OR REPLACE INTO referral_links
-            (bank, url, utm_source, utm_medium, utm_campaign)
-            VALUES (?, ?, ?, ?, ?)
-        """, (bank, base_url, utm_source, utm_medium, utm_campaign))
+            (bank, product_key, url, utm_source, utm_medium, utm_campaign)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (bank, product_key, base_url, utm_source, utm_medium, utm_campaign))
+        await db.commit()
+
+async def log_reminder_sent(user_id: int, admin_id: int):
+    """
+    Логирует факт отправки напоминания.
+    admin_id=0 означает системное напоминание (из cron).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO reminders_log (user_of_user_id, admin_id) VALUES (?, ?)",
+            (user_id, admin_id)
+        )
         await db.commit()
 
 async def get_users_for_auto_reminder() -> list[dict]:
-    """
-    Возвращает список пользователей, которым нужно отправить автоматическое напоминание.
-    
-    Условия:
-    - Для всех: карта получена, но не активирована >7 дней.
-    - Для Т-Банка: карта активирована, но покупка не совершена >7 дней.
-    
-    Returns:
-        list[dict]: Список словарей с ключами 'user_id', 'bank'.
-    """
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-
         seven_days_ago = (datetime.utcnow().date() - timedelta(days=7)).isoformat()
 
-        # Условие 1: карта получена, но не активирована >7 дней
         query1 = """
-            SELECT u.user_id, u.bank
+            SELECT u.user_id, u.bank, 'activation' as reminder_type
             FROM users u
             JOIN referral_progress p ON u.user_id = p.user_id
             WHERE p.card_received = 1
@@ -513,9 +560,8 @@ async def get_users_for_auto_reminder() -> list[dict]:
               AND p.card_received_date <= ?
         """
 
-        # Условие 2: Т-Банк, карта активирована, но покупка не сделана >7 дней
         query2 = """
-            SELECT u.user_id, u.bank
+            SELECT u.user_id, u.bank, 'purchase' as reminder_type
             FROM users u
             JOIN referral_progress p ON u.user_id = p.user_id
             WHERE u.bank = 't-bank'
@@ -530,20 +576,7 @@ async def get_users_for_auto_reminder() -> list[dict]:
         rows1 = await cursor1.fetchall()
         rows2 = await cursor2.fetchall()
 
-        # Объединяем и убираем дубли (маловероятно, но возможно)
-        all_rows = {row["user_id"]: dict(row) for row in rows1 + rows2}
-        return list(all_rows.values())  
-
-async def log_reminder_sent(user_id: int, admin_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO reminders_log (user_id, admin_id) VALUES (?, ?)",
-            (user_id, admin_id)
-        )
-        await db.commit()
-
-async def get_users_needing_reminder() -> list:
-    return []
+        return [dict(row) for row in rows1 + rows2]
 
 async def delete_user_by_id(user_id: int) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
