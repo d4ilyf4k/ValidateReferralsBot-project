@@ -33,13 +33,11 @@ async def ensure_db_directory():
         os.makedirs(db_dir, exist_ok=True)
 
 async def initialize_database():
-    """Инициализировать все таблицы базы данных."""
     await ensure_db_directory()
     
     print(f"🔄 Инициализация базы данных по пути: {DB_PATH}")
     
     async with get_db_connection() as db:
-        # 1. Таблица users
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -53,7 +51,6 @@ async def initialize_database():
         ''')
         print("✅ Таблица users создана/проверена")
         
-        # 2. Таблица user_banks
         await db.execute('''
             CREATE TABLE IF NOT EXISTS user_banks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,7 +62,6 @@ async def initialize_database():
         ''')
         print("✅ Таблица user_banks создана/проверена")
         
-        # 3. Таблица referral_progress
         await db.execute('''
             CREATE TABLE IF NOT EXISTS referral_progress (
                 user_id INTEGER PRIMARY KEY,
@@ -86,7 +82,6 @@ async def initialize_database():
         ''')
         print("✅ Таблица referral_progress создана/проверена")
         
-        # 4. Таблица financial_data
         await db.execute('''
             CREATE TABLE IF NOT EXISTS financial_data (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,7 +98,6 @@ async def initialize_database():
         ''')
         print("✅ Таблица financial_data создана/проверена")
         
-        # 5. Таблица reminders_log
         await db.execute('''
             CREATE TABLE IF NOT EXISTS reminders_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,7 +109,6 @@ async def initialize_database():
         ''')
         print("✅ Таблица reminders_log создана/проверена")
         
-        # 6. Таблица referral_links (БЕЗ КОЛОНКИ url!)
         await db.execute('''
             CREATE TABLE IF NOT EXISTS referral_links (
                 bank TEXT NOT NULL,
@@ -210,7 +203,6 @@ async def get_user_full_data(user_id: int) -> Optional[Dict[str, Any]]:
             return None
         
         user_data = dict(row)
-        user_data['phone'] = decrypt_phone(user_data.get('phone_enc'))
         
         all_banks = user_data.get('all_banks', '')
         user_data['banks'] = all_banks.split(',') if all_banks else []
@@ -685,8 +677,6 @@ async def get_all_referrals_data(include_financial: bool = True) -> List[Dict[st
             
             all_banks = item.get('all_banks', '')
             item['banks'] = all_banks.split(',') if all_banks else []
-            
-            item.pop('phone_enc', None)
             
             result.append(item)
         

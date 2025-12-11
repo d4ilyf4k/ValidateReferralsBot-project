@@ -93,23 +93,13 @@ async def generate_full_json_report() -> str:
             phone_enc = user.get('phone_enc')
             if phone_enc:
                 try:
-                    if isinstance(phone_enc, bytes):
-                        user['phone'] = decrypt_phone(phone_enc)
-                    elif isinstance(phone_enc, str):
-                        try:
-                            import base64
-                            decoded_bytes = base64.b64decode(phone_enc)
-                            user['phone'] = decrypt_phone(decoded_bytes)
-                        except:
-                            user['phone'] = phone_enc
-                    else:
-                        user['phone'] = decrypt_phone(phone_enc)
+                    user['phone'] = decrypt_phone(phone_enc)
                 except Exception as e:
                     print(f"⚠️ Ошибка расшифровки телефона для user_id={user.get('user_id')}: {e}")
                     user['phone'] = "[ошибка расшифровки]"
             else:
-                user['phone'] = user.get('phone') or "[нет телефона]"
-                
+                user['phone'] = "[нет телефона]"
+            
             user.pop('phone_enc', None)
 
             banks = user.get('banks', [])
