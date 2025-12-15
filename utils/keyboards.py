@@ -19,17 +19,6 @@ def get_phone_kb():
         one_time_keyboard=True
     )
 
-def get_bank_kb():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🏦Т-Банк")],
-            [KeyboardButton(text="🏦Альфа-Банк")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
-    
-
 def get_skip_kb():
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="Пропустить")]],
@@ -40,13 +29,23 @@ def get_skip_kb():
 def get_user_main_menu_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="ℹ️ Помощь"), KeyboardButton(text="📊 Статус заявки")],
-            [KeyboardButton(text="🏦 Выбрать банк"), KeyboardButton(text="💰 Финансовый отчёт")],
+            [KeyboardButton(text="🏦 Выбрать банк")],
+            [KeyboardButton(text="ℹ️ Помощь"), KeyboardButton(text="💰 Финансовый отчёт")],
             [KeyboardButton(text="✏️ Редактировать профиль"), KeyboardButton(text="🗑 Очистить историю")]
         ],
         resize_keyboard=True
     )
 
+def get_bank_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🏦Т-Банк")],
+            [KeyboardButton(text="🏦Альфа-Банк")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+    
 def get_bank_selection_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -58,63 +57,50 @@ def get_bank_selection_kb():
         one_time_keyboard=True
     )
 
-def get_admin_main_menu_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Статус заявки", callback_data="menu_status")],
-        [InlineKeyboardButton(text="🔍 Отчёт по рефералу", callback_data="admin_finance_referral")],
-        [InlineKeyboardButton(text="🔧 Админка", callback_data="menu_admin")]
-    ])
-    
 def get_edit_profile_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ ФИО", callback_data="edit_full_name")],
         [InlineKeyboardButton(text="✏️ Номер", callback_data="edit_phone")],
         [InlineKeyboardButton(text="✏️ Банк", callback_data="edit_bank")],
-        [InlineKeyboardButton(text="✏️ Активация карты", callback_data="edit_card_activated")],
-        [InlineKeyboardButton(text="✏️ Первая покупка", callback_data="edit_purchase_made")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_edit")]
     ])
 
-def get_yes_no_kb(prefix: str):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Да", callback_data=f"yesno_{prefix}_yes"),
-            InlineKeyboardButton(text="❌ Нет", callback_data=f"yesno_{prefix}_no")]
-    ])
-            
-    
+
 def get_admin_panel_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Дашборд", callback_data="admin_dashboard")],
         [InlineKeyboardButton(text="📤 Полный отчёт (JSON)", callback_data="admin_report")],
-        [InlineKeyboardButton(text="🔗 Обновить реф. ссылки", callback_data="admin_update_links")],
-        [InlineKeyboardButton(text="🔍 Найти реферала", callback_data="admin_find_phone")],
-        [InlineKeyboardButton(text="📨 Отправить напоминание", callback_data="admin_remind")],
-        [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_back")]
+        [InlineKeyboardButton(text="🔗 Обновить реф. ссылки", callback_data="admin_update_links")]
     ])
 
-def get_agreement_kb() -> InlineKeyboardMarkup:
+def get_admin_dashboard_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Финансы", callback_data="admin:finance")],
+        [InlineKeyboardButton(text="📈 Трафик", callback_data="admin:traffic")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
+    ])
+
+def get_admin_finance_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Сводка", callback_data="admin:finance:summary")],
+        [InlineKeyboardButton(text="📄 Детальный отчёт", callback_data="admin:finance:details")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_dashboard")]
+    ])
+
+
+def get_admin_traffic_filter_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Да, согласен", callback_data="agree_conditions"),
-            InlineKeyboardButton(text="📖 Подробнее", callback_data="show_details")
+            InlineKeyboardButton(text="📊 Все", callback_data="admin:traffic:all"),
+            InlineKeyboardButton(text="🎵 TikTok", callback_data="admin:traffic:tiktok"),
         ],
         [
-            InlineKeyboardButton(text="❌ Нет, отклонить", callback_data="disagree_conditions")
-        ]
+            InlineKeyboardButton(text="▶️ YouTube", callback_data="admin:traffic:yt"),
+            InlineKeyboardButton(text="✈️ Telegram", callback_data="admin:traffic:tg"),
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_dashboard")]
     ])
 
-def get_detailed_back_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Назад к условиям", callback_data="back_to_summary")],
-        [InlineKeyboardButton(text="✅ Да, согласен", callback_data="agree_conditions")],
-        [InlineKeyboardButton(text="❌ Нет, отклонить", callback_data="disagree_conditions")]
-    ])
-
-def get_detailed_conditions_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Принимаю условия", callback_data="agree_conditions")],
-        [InlineKeyboardButton(text="↩️ Назад к условиям", callback_data="back_to_main")]],
-    )
         
 def get_tbank_product_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -132,9 +118,20 @@ def get_black_subtype_kb():
         [InlineKeyboardButton(text="🎓 Молодёжная", callback_data="black_youth")],
         [InlineKeyboardButton(text="📼 Ретро", callback_data="black_retro")],
     ])
-
-def get_product_confirmation_kb():
+    
+def get_agreement_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, подтверждаю", callback_data="confirm_product"),
-        InlineKeyboardButton(text="✏️ Изменить выбор", callback_data="change_product")]
+        [
+            InlineKeyboardButton(text="✅ Да, согласен", callback_data="agree_conditions"),
+            InlineKeyboardButton(text="📖 Подробнее", callback_data="show_details")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Нет, отклонить", callback_data="disagree_conditions")
+        ]
     ])
+
+def get_detailed_conditions_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Принимаю условия", callback_data="agree_conditions")],
+        [InlineKeyboardButton(text="↩️ Назад к условиям", callback_data="back_to_main")]],
+    )

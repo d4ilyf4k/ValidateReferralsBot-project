@@ -14,8 +14,8 @@ class ProfileEdit(StatesGroup):
     purchase_made = State()
     application_submitted = State()
     application_date = State()
-    card_last4 = State()
-
+    choose_bank_for_activation = State()
+    choose_bank_for_purchase = State()
 class BankAgreement(StatesGroup):
     choosing_bank = State()
     choosing_tbank_product = State()
@@ -23,6 +23,5 @@ class BankAgreement(StatesGroup):
     waiting_agreement = State()
 
 class AdminStates(StatesGroup):
-    find_phone = State()
     finance_referral_phone = State()
-    remind_phone = State()
+    waiting_bonus_amount = State()

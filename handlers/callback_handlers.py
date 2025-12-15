@@ -1,443 +1,392 @@
-from config import settings
-from datetime import datetime
 from aiogram import Router, F, types
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, BufferedInputFile
-from aiogram.filters import StateFilter
+from aiogram.types import CallbackQuery
+from config import settings
 from database.db_manager import (
-        update_progress_field, 
-        get_user_by_phone, 
-        log_reminder_sent, 
-        get_user_full_data,
-        get_all_referrals_data,
-        decrypt_phone
+    confirm_user_bonus,
+    reject_user_bonus,
+    get_admin_finance_details,
+    get_admin_finance_summary,
+    get_admin_traffic_overview,
+    get_admin_traffic_finance_projection,
+    get_or_create_user_product,
+    get_referral_link,
 )
-from handlers.onboarding_handler import Onboarding
-from handlers.profile_handler import ProfileEdit
-from handlers.admin_handler import send_reminder_to_user
-from handlers.finance_handler import show_finance_report
-from handlers.bank_handler import _get_detailed_conditions_text, _get_conditions_text
+from services.referrer_report_generator import generate_admin_dashboard_text
 from utils.keyboards import (
-    get_phone_kb,
-    get_bank_kb,
-    get_yes_no_kb,
     get_user_main_menu_kb,
-    get_admin_main_menu_kb,
-    get_admin_panel_kb, 
+    get_admin_panel_kb,
+    get_admin_dashboard_kb,
+    get_admin_finance_kb,
+    get_admin_traffic_filter_kb,
     get_agreement_kb,
-    get_detailed_back_kb,
+    get_bank_kb,
 )
-from utils.validation import is_valid_date
-from utils.states import BankAgreement
-
-from services.report_generator import (
-    generate_referral_text_report_with_conditions, 
-    )
-from services.bonus_calculator import recalculate_all_bonuses
+from handlers.bank_handler import (
+    _get_conditions_text,
+    _get_detailed_conditions_text,
+)
 
 router = Router()
 
-@router.callback_query(F.data == "menu_finance")
-async def admin_finance(callback: types.CallbackQuery):
-    if callback.from_user.id not in settings.ADMIN_IDS:
-        await callback.answer("🚫 Доступ запрещён.", show_alert=True)
-        return
-    await callback.answer()
-    await show_finance_report(callback.message)
 
-@router.callback_query(F.data == "menu_status")
-async def admin_status(callback: types.CallbackQuery):
-    await callback.answer()
-    user_data = await get_user_full_data(callback.from_user.id)
-    if not user_data:
-        await callback.message.answer("Ошибка: профиль не найден.")
-        return
-    def fmt_date(d): return d if d else "—"
-    status_text = (
-        "📋 <b>Статус вашей заявки</b>\n\n"
-        f"• 🔓 Карта активирована: {'✅' if user_data['card_activated'] else '❌'}\n"
-        f"• 💳 Покупка: {'✅' if user_data['purchase_made'] else '❌'}"
-    )
-    await callback.message.answer(status_text, parse_mode="HTML")
+def is_admin(user_id: int) -> bool:
+    return user_id in settings.ADMIN_IDS
 
 
-@router.callback_query(F.data == "menu_profile")
-async def admin_profile(callback: types.CallbackQuery):
-    await callback.answer()
-    from .profile_handler import edit_profile
-    fake_message = types.Message(
-        message_id=callback.message.message_id,
-        date=callback.message.date,
-        chat=callback.message.chat,
-        from_user=callback.from_user,
-        text="✏️ Редактировать профиль"
-    )
-    await edit_profile(fake_message)
-    
+# ==========================
+# ADMIN PANEL
+# ==========================
+
 @router.callback_query(F.data == "menu_admin")
-async def admin_panel(callback: types.CallbackQuery):
-    if callback.from_user.id not in settings.ADMIN_IDS:
-        await callback.answer("🚫 Доступ запрещён.", show_alert=True)
-        return
-    await callback.answer()
-    await callback.message.answer(
+async def open_admin_panel(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("🚫 Доступ запрещён.", show_alert=True)
+
+    await callback.message.edit_text(
         "🛠 <b>Админ-панель</b>\nВыберите действие:",
         reply_markup=get_admin_panel_kb(),
         parse_mode="HTML"
     )
-    
-@router.callback_query(F.data == "cancel_edit")
-async def cancel_edit(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.answer("Отменено ✅", show_alert=False)
-    await callback.message.answer(
-        "Действие отменено. Вы в главном меню:",
-        reply_markup=get_user_main_menu_kb()
-    )
-
-
-@router.callback_query(Onboarding.full_name, F.data == "back_to_start")
-async def back_to_start_from_name(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.answer("Регистрация отменена. Нажмите /start для начала.")
-
-@router.callback_query(Onboarding.phone, F.data == "back_to_name")
-async def back_to_name(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("Введите ваше ФИО:")
-    await state.set_state(Onboarding.full_name)
-
-@router.callback_query(Onboarding.bank, F.data == "back_to_phone")
-async def back_to_phone(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("Отправьте номер телефона:", reply_markup=get_phone_kb())
-    await state.set_state(Onboarding.phone)
-
-@router.callback_query(F.data == "back_to_banks")
-async def back_to_banks(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer("Выберите банк:", reply_markup=get_bank_kb())
-    await state.set_state(Onboarding.bank)
-
-@router.callback_query(ProfileEdit.card_activated, F.data.startswith("yesno_"))
-async def handle_card_activated_choice(callback: CallbackQuery, state: FSMContext):
-    value = callback.data == "yesno_card_act_yes"
-    await update_progress_field(callback.from_user.id, "card_activated", value)
-    if value:
-        current_date = datetime.now().strftime("%d.%m.%Y")
-        await update_progress_field(callback.from_user.id, "card_activated_date", current_date)
-    if value:
-        await callback.message.answer("Укажите дату активации карты (ДД.ММ.ГГГГ):")
-        await state.set_state(ProfileEdit.card_activated_date)
-    else:
-        await _finalize_profile_edit(callback, state)
-
-@router.message(ProfileEdit.application_date)
-async def process_app_date(message: types.Message, state: FSMContext):
-    if not is_valid_date(message.text):
-        await message.answer("Неверный формат даты. Используйте ДД.ММ.ГГГГ.")
-        return
-    await update_progress_field(message.from_user.id, "application_date", message.text)
-    await _finalize_profile_edit(message, state)
-
-@router.callback_query(ProfileEdit.card_activated, F.data.startswith("yesno_"))
-async def handle_card_activated_choice(callback: CallbackQuery, state: FSMContext):
-    value = callback.data == "yesno_card_act_yes"
-    
-    await update_progress_field(callback.from_user.id, "card_activated", value)
-    
-    if value:
-        current_date = datetime.now().strftime("%d.%m.%Y")
-        await update_progress_field(callback.from_user.id, "card_activated_date", current_date)
-        print(f"📅 Установлена дата активации: {current_date}")
-    
-    if value:
-        await callback.message.answer(f"Дата активации установлена: {current_date}\nХотите изменить дату? (ДД.ММ.ГГГГ) или нажмите 'Пропустить':")
-        await state.set_state(ProfileEdit.card_activated_date)
-    else:
-        await _finalize_profile_edit(callback, state)
-
-@router.message(ProfileEdit.card_activated_date)
-async def process_card_activated_date(message: types.Message, state: FSMContext):
-    if message.text.lower() == "пропустить":
-        pass
-    elif is_valid_date(message.text):
-        await update_progress_field(message.from_user.id, "card_activated_date", message.text)
-        print(f"📅 Пользователь изменил дату активации на: {message.text}")
-    else:
-        await message.answer("Неверная дата. Формат: ДД.ММ.ГГГГ или напишите 'Пропустить'")
-        return
-    await _finalize_profile_edit(message, state)
-
-
-async def _finalize_profile_edit(obj, state: FSMContext):
-    await recalculate_all_bonuses(obj.from_user.id)
-    msg = "✅ Данные обновлены! Бонусы пересчитаны."
-    if isinstance(obj, types.Message):
-        await obj.answer(msg, reply_markup=get_user_main_menu_kb())
-    else:
-        await obj.message.answer(msg, reply_markup=get_user_main_menu_kb())
-    await state.clear()
-
-
-@router.callback_query(F.data.startswith("edit_"))
-async def handle_edit_field(callback: CallbackQuery, state: FSMContext):
-    field = callback.data.replace("edit_", "")
-    if field == "full_name":
-        await callback.message.answer("Введите новое ФИО:")
-        await state.set_state(ProfileEdit.full_name)
-    elif field == "phone":
-        await callback.message.answer("Отправьте новый номер:", reply_markup=get_phone_kb())
-        await state.set_state(ProfileEdit.phone)
-    elif field == "bank":
-        await callback.message.answer("Выберите банк:", reply_markup=get_bank_kb())
-        await state.set_state(ProfileEdit.bank)
-    elif field == "application_submitted":
-        await callback.message.answer("Заявка подана?", reply_markup=get_yes_no_kb("app_submitted"))
-        await state.set_state(ProfileEdit.application_submitted)
-    elif field == "card_activated":
-        await callback.message.answer("Карта активирована?", reply_markup=get_yes_no_kb("card_act"))
-        await state.set_state(ProfileEdit.card_activated)
-    else:
-        await callback.answer("Функция временно недоступна.", show_alert=True)
     await callback.answer()
 
-async def show_product_conditions(
-    callback: types.CallbackQuery, 
-    state: FSMContext, 
-    product_key: str, 
-    product_name: str
-):
-    data = await state.get_data()
-    black_type_name = data.get("black_type_name", "")
 
-    conditions_text = _get_detailed_conditions_text(product_key, product_name, black_type_name)
+@router.callback_query(F.data.startswith("bonus:"))
+async def handle_bonus_action(call: types.CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
 
-    await state.update_data(final_product_selection={
-        "product_key": product_key,
-        "product_name": product_name,
-        "black_type": black_type_name if product_key == "tbank_black" else None
-    })
+    _, action, user_id, bank, product_key = call.data.split(":")
 
-    await state.set_state(BankAgreement.waiting_agreement)
+    user_id = int(user_id)
+
+    if action == "confirm":
+        success = await confirm_user_bonus(user_id, bank, product_key)
+        text = "✅ Бонус подтверждён" if success else "⚠️ Уже обработан"
+
+    elif action == "reject":
+        success = await reject_user_bonus(user_id, bank, product_key)
+        text = "❌ Бонус отклонён" if success else "⚠️ Уже обработан"
+
+    else:
+        await call.answer("Неизвестное действие", show_alert=True)
+        return
+
+    # UX: обновляем сообщение
+    await call.message.edit_text(
+        call.message.text + f"\n\n<b>{text}</b>",
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "admin:finance")
+async def admin_finance_root(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔️ Нет доступа", show_alert=True)
+
+    data = await get_admin_finance_summary()
+
+    if data["total_count"] == 0:
+        text = "💰 <b>Финансы</b>\n\nПока нет подтверждённых заявок."
+    else:
+        text = (
+            "💰 <b>Финансы</b>\n\n"
+            f"📦 Подтверждённых заявок: <b>{data['total_count']}</b>\n"
+            f"💵 Общий доход: <b>{data['total_profit']:,} ₽</b>"
+        )
 
     await callback.message.edit_text(
-        conditions_text,
+        text,
         parse_mode="HTML",
-        reply_markup=get_agreement_kb()
+        reply_markup=get_admin_finance_kb()
     )
-    
-@router.callback_query(F.data == "admin_report")
-async def admin_report(callback: types.CallbackQuery):
-    if callback.from_user.id not in settings.ADMIN_IDS:
-        await callback.answer("🚫 Доступ запрещён.", show_alert=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:finance:summary")
+async def admin_finance_summary_cb(callback: types.CallbackQuery):
+    await callback.answer()
+
+    data = await get_admin_finance_summary()
+
+    text = (
+        "📊 <b>Финансовая сводка</b>\n\n"
+        f"💳 Подтверждённых заявок: <b>{data['total_count']}</b>\n"
+        f"💰 Общая прибыль: <b>{data['total_profit']} ₽</b>\n\n"
+        "Выберите действие ниже:"
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_admin_finance_kb(),
+        parse_mode="HTML"
+    )
+
+@router.callback_query(F.data == "admin:finance:details")
+async def admin_finance_details_cb(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
         return
-    
-    await callback.answer("📊 Генерируем отчёт...", show_alert=False)
-    
-    try:
-        raw_data = await get_all_referrals_data(include_financial=True)
-        
-        if not raw_data:
-            await callback.message.answer("📭 Нет данных для отчёта.")
-            return
-        
-        import json
-        from datetime import datetime
-        
-        processed_users = []
-        for user in raw_data:
-            user_dict = dict(user)
-            
-            phone_enc = user_dict.get('phone_enc')
-            if phone_enc:
-                user_dict['phone'] = decrypt_phone(phone_enc)
-            else:
-                user_dict['phone'] = None
-            
-            if 'phone_enc' in user_dict:
-                del user_dict['phone_enc']
-            
-            processed_users.append(user_dict)
-        
-        json_result = {
-            "generated_at": datetime.now().isoformat(),
-            "total_users": len(processed_users),
-            "users": processed_users
-        }
-        
-        json_str = json.dumps(json_result, ensure_ascii=False, indent=2, default=str)
-        
-        await callback.message.answer_document(
-            BufferedInputFile(
-                json_str.encode("utf-8"),
-                filename=f"referral_report_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
-            ),
-            caption=f"📄 Отчёт по рефералам\n📊 Пользователей: {len(processed_users)}\n🕒 Сгенерирован: {datetime.now().strftime('%H:%M')}"
+
+    rows = await get_admin_finance_details()
+    if not rows:
+        return await callback.message.edit_text("📭 Пока нет данных по продуктам")
+
+    text = (
+        "📄 <b>Детальный финансовый отчёт</b>\n"
+        "<i>Суммы указаны согласно условиям офферов. "
+        "Фактическая выплата зависит от банка.</i>\n\n"
+    )
+
+    for r in rows[:20]:
+        text += (
+            f"👤 {r['user_id']} | {r['traffic_source']}\n"
+            f"🏦 {r['bank']}\n"
+            f"📦 {r['product_name']}\n"
+            f"💰 {r['referrer_bonus']:,} ₽\n"
+            f"🕒 {r['created_at']}\n\n"
         )
-        
-    except Exception as e:
-        print(f"❌ Ошибка генерации отчёта: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        await callback.message.answer(
-            f"❌ Ошибка генерации отчёта:\n"
-            f"`{str(e)[:100]}`\n\n"
-            f"Проверьте логи или настройки БД.",
-            parse_mode="Markdown"
+
+    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.answer()
+
+    
+@router.callback_query(F.data == "admin_dashboard")
+async def admin_dashboard(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("⛔️ Нет доступа", show_alert=True)
+
+    text = await generate_admin_dashboard_text()
+
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_admin_dashboard_kb()
+    )
+    await callback.answer()
+    
+
+
+
+    
+@router.callback_query(F.data == "admin:traffic")
+async def admin_traffic_root(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        return await cb.answer("⛔️ Нет доступа", show_alert=True)
+
+    overview = await get_admin_traffic_overview()
+    projection = await get_admin_traffic_finance_projection()
+
+    total_users = sum(r["users"] for r in overview)
+    total_products = sum(r["products_selected"] for r in overview)
+    total_net = sum(r["net_bonus"] for r in projection)
+
+    text = (
+        "📊 <b>Трафик (сводка)</b>\n\n"
+        f"👥 Пользователей: <b>{total_users}</b>\n"
+        f"📦 Продуктов: <b>{total_products}</b>\n"
+        f"💰 Прогноз дохода: <b>{total_net} ₽</b>"
+    )
+
+    await cb.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_admin_traffic_filter_kb()
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:traffic:all")
+async def admin_traffic_all(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        return await cb.answer("⛔️ Нет доступа", show_alert=True)
+
+    overview = await get_admin_traffic_overview()
+    projection = await get_admin_traffic_finance_projection()
+
+    text = "<b>📊 Трафик: все источники</b>\n\n"
+
+    for ov in overview:
+        pr = next(
+            (p for p in projection if p["traffic_source"] == ov["traffic_source"]),
+            None
         )
-    
-    await callback.answer()
 
-@router.callback_query(F.data == "admin_finance_total")
-async def admin_finance_total(callback: CallbackQuery):
-    await callback.answer()
-    from handlers.admin_handler import cmd_finance_total
-    await cmd_finance_total(callback.message)
+        text += (
+            f"• <b>{ov['traffic_source']}</b>\n"
+            f"  👥 Пользователей: {ov['users']}\n"
+            f"  📦 Продуктов: {ov['products_selected']}\n"
+            f"  💰 Нетто: {pr['net_bonus'] if pr else 0} ₽\n\n"
+        )
 
-class AdminStates(StatesGroup):
-    find_phone = State()
-    finance_referral_phone = State()
-    remind_phone = State()
+    await cb.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_admin_traffic_filter_kb()
+    )
+    await cb.answer()
 
-@router.callback_query(F.data == "admin_finance_referral")
-async def admin_finance_referral_start(callback: types.CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in settings.ADMIN_IDS:
+
+@router.callback_query(
+    F.data.startswith("admin:traffic:")
+    & ~F.data.in_(["admin:traffic", "admin:traffic:all"])
+)
+async def admin_traffic_by_source(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id):
+        return await cb.answer("⛔️ Нет доступа", show_alert=True)
+
+    source = cb.data.split(":")[-1]
+
+    overview = await get_admin_traffic_overview()
+    projection = await get_admin_traffic_finance_projection()
+
+    ov = next((r for r in overview if r["traffic_source"] == source), None)
+    pr = next((r for r in projection if r["traffic_source"] == source), None)
+
+    text = (
+        f"📊 <b>Трафик: {source}</b>\n\n"
+        f"👥 Пользователей: <b>{ov['users'] if ov else 0}</b>\n"
+        f"📦 Продуктов: <b>{ov['products_selected'] if ov else 0}</b>\n"
+        f"💰 Доход (нетто): <b>{pr['net_bonus'] if pr else 0} ₽</b>"
+    )
+
+    await cb.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_admin_traffic_filter_kb()
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin_back")
+async def admin_back(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещён.", show_alert=True)
         return
+
+    await callback.message.edit_text(
+        "🛠 <b>Админ-меню</b>",
+        reply_markup=get_admin_panel_kb(),
+        parse_mode="HTML"
+    )
     await callback.answer()
-    await callback.message.answer("📱 Введите номер телефона реферала:")
-    await state.set_state(AdminStates.finance_referral_phone)
-
-@router.message(AdminStates.finance_referral_phone)
-async def process_finance_referral_phone(message: types.Message, state: FSMContext):
-    phone = message.text.strip()
-    user = await get_user_by_phone(phone)
-    if not user:
-        await message.answer("❌ Реферал не найден.")
-    else:
-        report = await generate_referral_text_report_with_conditions(user)
-        await message.answer(report, parse_mode="HTML")
-    await state.clear()
-
-@router.message(AdminStates.find_phone)
-async def process_find_phone(message: types.Message, state: FSMContext):
-    phone = message.text.strip()
-    user = await get_user_by_phone(phone)
-
-    if not user:
-        await message.answer("❌ Реферал с таким номером не найден.")
-    else:
-        report = await generate_referral_text_report_with_conditions(user)
-        await message.answer(report, parse_mode="HTML")
-
-    await state.clear()
-
-@router.callback_query(F.data == "admin_remind")
-async def admin_remind_start(callback: types.CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in settings.ADMIN_IDS:
-        await callback.answer("🚫 Доступ запрещён.", show_alert=True)
-        return
-    await callback.answer()
-    await callback.message.answer("📱 Введите номер телефона реферала (например, +79161234567):")
-    await state.set_state(AdminStates.remind_phone)
     
-@router.message(AdminStates.remind_phone)
-async def process_remind_phone(message: types.Message, state: FSMContext):
-    phone = message.text.strip()
-    user = await get_user_by_phone(phone)
-    
-    if not user:
-        await message.answer("❌ Реферал с таким номером не найден.")
+
+# ==========================
+# BANK AGREEMENT FLOW
+# ==========================
+
+@router.callback_query(F.data == "agree_conditions")
+async def agree_conditions(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+
+    if not all(k in data for k in ("bank_key", "product_key", "product_name")):
+        await callback.answer("⚠️ Сессия устарела, начните заново", show_alert=True)
         await state.clear()
         return
 
-    await send_reminder_to_user(
-        bot=message.bot,
-        user_id=user["user_id"],
-        message_text="👋 Пожалуйста, обновите статус вашей заявки — это поможет нам быстрее начислить бонус!"
+    user_id = callback.from_user.id
+
+    await get_or_create_user_product(
+        user_id,
+        data["bank_key"],
+        data["product_key"],
+        data["product_name"]
     )
-    
-    await log_reminder_sent(user["user_id"], message.from_user.id)
-    
-    await message.answer(f"✅ Напоминание отправлено рефералу {user['full_name']}.")
+
+    link = await get_referral_link(data["bank_key"], data["product_key"])
+
+    if not link:
+        await callback.message.edit_text("⚠️ Ссылка временно недоступна")
+        await state.clear()
+        return
+
+    await callback.message.edit_text(
+        f"<b>🎉 Ваша персональная ссылка на {data['product_name']}:</b>\n\n"
+        f"{link}",
+        parse_mode="HTML"
+    )
+
+    await callback.message.answer(
+        "Главное меню:",
+        reply_markup=get_user_main_menu_kb()
+    )
+
     await state.clear()
-
-
-@router.callback_query(F.data == "admin_find_phone")
-async def start_admin_find_phone(callback: types.CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in settings.ADMIN_IDS:
-        await callback.answer("🚫 Доступ запрещён.", show_alert=True)
-        return
-
     await callback.answer()
-    await callback.message.answer("📱 Введите номер телефона реферала (например, +79161234567):")
-    await state.set_state(AdminStates.find_phone)
 
-@router.callback_query(F.data == "admin_update_links")
-async def admin_update_links(callback: types.CallbackQuery):
-    if callback.from_user.id not in settings.ADMIN_IDS:
-        await callback.answer("🚫 Доступ запрещён.", show_alert=True)
-        return
-    await callback.answer()
-    await callback.message.answer(
-        "📌 Отправьте команду в формате:\n"
-        "<code>/update_link [банк] [продукт] [ссылка] [utm-параметры...]</code>\n\n"
-        "<b>Пример:</b>\n"
-        "<code>/update_link t-bank black_aroma https://tbank.ru/aroma utm_source=bot utm_medium=ref</code>\n\n"
-        "<b>Поддерживаемые банки:</b> <code>t-bank</code>, <code>alpha</code>\n"
-        "<b>Продукты для t-bank:</b>\n"
-        "• <code>black_classic</code> — обычная Black\n"
-        "• <code>black_aroma</code> — аромакарта\n"
-        "• <code>black_youth</code> — молодёжная\n"
-        "• <code>black_retro</code> — ретро\n"
-        "• <code>black_premium</code> — premium\n"
-        "• <code>drive</code> — карта для авто\n"
-        "• <code>main</code> — fallback (не рекомендуется)",
-        parse_mode="HTML"
-    )
 
-@router.callback_query(F.data == "admin_back")
-async def admin_back(callback: types.CallbackQuery):
-    if callback.from_user.id not in settings.ADMIN_IDS:
-        await callback.answer("🚫 Доступ запрещён.", show_alert=True)
-        return
-
-    await callback.answer()
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-
-    await callback.message.answer(
-        "🛠 <b>Админ-меню</b>",
-        reply_markup=get_admin_main_menu_kb(),
-        parse_mode="HTML"
-    )
-
-@router.callback_query(F.data == "show_details", StateFilter(BankAgreement.waiting_agreement))
-async def show_details(callback: types.CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "show_details")
+async def show_details(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     product_key = data.get("product_key")
     product_name = data.get("product_name", "продукт")
 
     if not product_key:
-        await callback.answer("❌ Не удалось определить продукт.", show_alert=True)
+        await callback.answer("❌ Продукт не найден.", show_alert=True)
         return
 
-    detailed_text = _get_detailed_conditions_text(product_key, product_name)
-    await callback.message.edit_text(detailed_text, parse_mode="HTML", reply_markup=get_detailed_back_kb())
+    text = _get_detailed_conditions_text(product_key, product_name)
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_agreement_kb()
+    )
     await callback.answer()
-    
-@router.callback_query(F.data == "back_to_summary", StateFilter(BankAgreement.waiting_agreement))
-async def back_to_summary(callback: types.CallbackQuery, state: FSMContext):
+
+
+@router.callback_query(F.data == "disagree_conditions")
+async def agree_fallback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+
+    await callback.message.edit_text(
+        "❌ Без согласия с условиями участие невозможно.\n\n"
+        "Если передумаете — нажмите /start"
+    )
+
+
+
+@router.callback_query(F.data == "back_to_summary")
+async def back_to_summary(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     product_key = data.get("product_key")
     product_name = data.get("product_name")
 
     if not product_key:
-        await callback.answer("❌ Ошибка: продукт не выбран.", show_alert=True)
+        await callback.answer("❌ Продукт не выбран.", show_alert=True)
         return
 
-    summary_text = _get_conditions_text(product_key, product_name)
-    await callback.message.edit_text(summary_text, parse_mode="HTML", reply_markup=get_agreement_kb())
+    text = _get_conditions_text(product_key, product_name)
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_agreement_kb()
+    )
     await callback.answer()
+
+
+@router.callback_query(F.data == "back_to_banks")
+async def back_to_banks(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+
+    await callback.message.answer(
+        "🏦 Выберите банк:",
+        reply_markup=get_bank_kb()
+    )
+
+    await callback.answer()
+
+
+# ==========================
+# COMMON
+# ==========================
+
+@router.callback_query(F.data == "cancel_edit")
+async def cancel_edit(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer("Отменено")
+    await callback.message.answer(
+        "Вы в главном меню:",
+        reply_markup=get_user_main_menu_kb()
+    )

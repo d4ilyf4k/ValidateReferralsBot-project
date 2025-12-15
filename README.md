@@ -249,8 +249,6 @@
 ```bash
 referral_bot/
 
-referral_bot/
-
 ├── .env                    # BOT_TOKEN, DATABASE_URL, ADMIN_IDS, ENCRYPTION_KEY
 ├── .gitignore
 ├── README.md
@@ -393,7 +391,6 @@ referral_bot/
 - **`validation.py`**
     - `is_valid_full_name(text)`,
     - `is_valid_date(date_str)`,
-    - `is_valid_card_last4(text)`.
 - **`keyboards.py`**:
     - `get_bank_choice_kb()`,
     - `get_tbank_products_kb()`,

@@ -1,38 +1,34 @@
-from aiogram import Router, F, types
-from aiogram.types import BufferedInputFile
-from database.db_manager import get_user_full_data
-from services.report_generator import generate_referral_json, generate_referral_text_report_with_conditions
-
+from aiogram import Router, F
+from aiogram.types import CallbackQuery, Message
+from services.user_report_generator import generate_user_finance_report
+from utils.keyboards import get_user_main_menu_kb
 router = Router()
 
 @router.message(F.text == "💰 Финансовый отчёт")
-async def show_finance_report(message: types.Message):
-    user_data = await get_user_full_data(message.from_user.id)
-    if not user_data or "bank" not in user_data:
-        await message.answer("Сначала завершите регистрацию.")
-        return
-
-    report = await generate_referral_text_report_with_conditions(user_data)
-    await message.answer(report, parse_mode="HTML")
-
-@router.callback_query(F.data == "📤 Экспорт в JSON")
-async def export_json(callback: types.CallbackQuery):
-    user_data = await get_user_full_data(callback.from_user.id)
-    if not user_data:
-        await callback.answer("Сначала завершите регистрацию с помощью /start.")
-        return
-
-    try:
-        json_str = generate_referral_json(user_data)
-        
-        await callback.answer_document(
-            BufferedInputFile(
-                json_str.encode("utf-8"), 
-                filename="referral_report.json"
-            ),
-            caption="📄 Ваши данные в формате JSON."
-        )
-    except Exception as e:
-        print(f"Ошибка при экспорте JSON для user_id={callback.from_user.id}: {e}")
-        await callback.answer("❌ Произошла ошибка при генерации отчёта.")
+async def show_finance_report(message: Message):
+    text = await generate_user_finance_report(message.from_user.id)
+    await message.answer(text, parse_mode="HTML")
     
+    
+@router.callback_query(F.data == "user:finance:show")
+async def show_finance_report_callback(callback: CallbackQuery):
+    text, keyboard = await generate_user_finance_report(callback.from_user.id)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "user:finance:back")
+async def finance_back(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "Главное меню",
+        reply_markup=get_user_main_menu_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
