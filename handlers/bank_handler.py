@@ -55,6 +55,11 @@ async def build_final_referral_url(
     variant_key: str | None,
     traffic_source: str
 ) -> str:
+
+    base_url = await get_referral_link(bank_key, product_key, variant_key, shorten=False)
+    if not base_url:
+        return None
+
     utm_source = "ReferralFlowBot"
     utm_medium = traffic_source
     utm_campaign = variant_key or product_key
@@ -139,7 +144,7 @@ async def choose_product(callback: types.CallbackQuery, state: FSMContext):
 
     kb.button(
         text=f"✅ Оформить {product_name}",
-        callback_data=f"user_offer_apply:{product_key}|0"
+        callback_data=f"offer_apply:{product_key}|0"
     )
 
     if variants:
@@ -166,9 +171,13 @@ async def show_product_variants(callback: types.CallbackQuery, state: FSMContext
     data = await state.get_data()
     bank_key = data.get("bank_key")
 
+    if not bank_key:
+        await callback.answer("❌ Ошибка: банк не выбран.", show_alert=True)
+        return
+
     variants = await get_variants(bank_key, product_key)
     if not variants:
-        await callback.answer("⚠️ Акций нет", show_alert=True)
+        await callback.answer("⚠️ Нет доступных акций для этого продукта.", show_alert=True)
         return
 
     kb = InlineKeyboardBuilder()
@@ -176,19 +185,21 @@ async def show_product_variants(callback: types.CallbackQuery, state: FSMContext
         variant_name = v.get("title") or f"Акция {v.get('variant_key')}"
         kb.button(
             text=variant_name,
-            callback_data=f"user_variant:{v.get('variant_key')}"
+            callback_data=f"offer_apply:{product_key}|{v.get('variant_key')}"
         )
+
+    kb.button(text="⬅ Назад", callback_data=f"user_product_back:{product_key}")
     kb.adjust(1)
 
     await state.set_state(UserCatalogFSM.choosing_variant)
+    await state.update_data(product_key=product_key)
 
     await callback.message.edit_text(
-        f"🧩 <b>Текущие акции продукта:</b>",
+        f"🧩 <b>Текущие акции продукта {product_key}:</b>",
         reply_markup=kb.as_markup(),
         parse_mode="HTML"
     )
     await callback.answer()
-
 
 # -------------------- show_standard_conditions --------------------
 async def show_standard_conditions(callback: types.CallbackQuery, state: FSMContext):
@@ -247,62 +258,50 @@ async def show_conditions(callback: types.CallbackQuery, state: FSMContext):
 
 
 # -------------------- apply_offer --------------------
-@router.callback_query(F.data.startswith("offer_apply:"))
-async def apply_offer(call: types.CallbackQuery, state: FSMContext):
+@router.callback_query(F.data.startswith(("offer_apply:", "user_product_variants:")))
+async def apply_offer(callback: types.CallbackQuery, state: FSMContext):
     try:
-        payload = call.data.split(":", 1)[1]
-        if not payload:
-            raise ValueError("Пустой payload offer_apply")
-
-        product_key, variant_key = payload.split("|") if "|" in payload else (payload, None)
-
-        if variant_key == "0":
-            variant_key = None
-
         data = await state.get_data()
         bank_key = data.get("bank_key")
         traffic_source = data.get("traffic_source", DEFAULT_SOURCE)
 
-        if not bank_key:
-            raise ValueError("bank_key отсутствует в FSM")
+        if callback.data.startswith("offer_apply:"):
+            payload = callback.data.split(":", 1)[1]
+            product_key, variant_key = payload.split("|") if "|" in payload else (payload, None)
+            if variant_key == "0":
+                variant_key = None
 
-        base_url = await get_referral_link(
-            bank_key=bank_key,
-            product_key=str(product_key),
-            variant_key=str(variant_key) if variant_key else None,
-            shorten=False
-        )
-
-        if not base_url:
-            raise ValueError(
-                f"Ссылка не найдена (bank={bank_key}, product={product_key}, variant={variant_key})"
-            )
+        elif callback.data.startswith("user_product_variants:"):
+            product_key = callback.data.split(":", 1)[1]
+            variant_key = None
 
         final_url = await build_final_referral_url(
-            base_url=base_url,
+            base_url=None,
             bank_key=bank_key,
             product_key=str(product_key),
             variant_key=str(variant_key) if variant_key else None,
             traffic_source=traffic_source
         )
 
-        await call.message.answer(
-            f"🔗 Ваша ссылка:\n{final_url}",
+        if not final_url:
+            raise ValueError("Ссылка не найдена")
+
+        await callback.message.answer(
+            f"🔗 Ваша уникальная ссылка:\n{final_url}",
             disable_web_page_preview=True,
             reply_markup=get_user_main_menu_kb()
         )
-        await state.clear()        
-        await call.answer()
+        await state.clear()
+        await callback.answer()
 
     except Exception:
         logging.exception("apply_offer failed")
-
-        await call.message.answer(
+        await callback.message.answer(
             "❌ Ссылка временно недоступна.\n"
             "Пожалуйста, выберите продукт заново.",
             reply_markup=get_user_main_menu_kb()
         )
-        await call.answer()
+        await callback.answer()
 
 
 
