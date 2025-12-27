@@ -183,7 +183,6 @@ async def update_link_input(message: types.Message, state: FSMContext):
         return
 
     base_url = message.text.strip()
-
     if not base_url.startswith(("http://", "https://")):
         await message.answer("❌ URL должен начинаться с http:// или https://")
         return
@@ -199,11 +198,10 @@ async def update_link_input(message: types.Message, state: FSMContext):
     )
 
     if success:
+        target = f"{bank_key}/{product_key}" if not variant_key else f"{bank_key}/{product_key}/{variant_key}"
         await message.answer(
             f"✅ Ссылка успешно сохранена!\n\n"
-            f"Банк: {bank_key}\n"
-            f"Продукт: {product_key}\n"
-            f"Вариант: {variant_key or '—'}\n\n"
+            f"Цель: {target}\n"
             f"🔗 Оригинальная ссылка:\n{base_url}"
         )
     else:

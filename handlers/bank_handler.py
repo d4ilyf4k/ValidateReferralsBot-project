@@ -121,6 +121,7 @@ async def choose_variant(callback: types.CallbackQuery, state: FSMContext):
     product_key = callback.data.split(":", 1)[1]
     data = await state.get_data()
     bank_key = data.get("bank_key")
+
     if not bank_key:
         raise RuntimeError("FSM missing bank_key before choose_variant")
 
@@ -134,9 +135,20 @@ async def choose_variant(callback: types.CallbackQuery, state: FSMContext):
         return
 
     await state.set_state(UserCatalogFSM.choosing_variant)
-    kb = build_kb(variants, "user_variant", back="user:back_to_products")
-    await callback.message.edit_text("🧩 <b>Выберите вариант:</b>", reply_markup=kb, parse_mode="HTML")
+    kb = InlineKeyboardBuilder()
+    for variant in variants:
+        kb.button(text=variant["name"], callback_data=f"user_variant:{variant['id']}")
+
+    kb.button(text="Оформить продукт без варианта", callback_data=f"offer_apply:{product_key}|0")
+    kb.adjust(1)
+
+    await callback.message.edit_text(
+        "🧩 <b>Выберите вариант или оформите продукт целиком:</b>",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML"
+    )
     await callback.answer()
+
 
 
 # -------------------- show_standard_conditions --------------------
