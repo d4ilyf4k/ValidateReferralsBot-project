@@ -1,82 +1,80 @@
 import json
 from datetime import datetime
+
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 
 from config import settings
-from jobs.weekly_aggregator import (
-    get_weekly_traffic_stats,
-    get_weekly_finance_stats
-)
+from jobs.weekly_aggregator import generate_weekly_snapshot
 
 
 async def send_weekly_report(bot: Bot):
     """
     Еженедельный отчёт для администратора.
-    Аналитика трафика + оценка дохода (gross).
+
+    • Источник данных: applications
+    • Source of truth: weekly_aggregator.generate_weekly_snapshot
+    • Основной формат: JSON
+    • Telegram — только краткая сводка
     """
 
     try:
-        # --- данные ---
-        traffic = await get_weekly_traffic_stats(days=7)
-        finance = await get_weekly_finance_stats(days=7)
+        # === Генерация weekly JSON ===
+        snapshot_json = await generate_weekly_snapshot()
+        snapshot = json.loads(snapshot_json)
 
-        total_users = sum(row["users"] for row in traffic)
-        total_products = finance.get("products", 0)
-        gross_income = finance.get("gross_income", 0)
+        summary = snapshot.get("summary", {})
+        by_bank = snapshot.get("by_bank", [])
 
-        # --- JSON snapshot ---
-        report = {
-            "period_days": 7,
-            "generated_at": datetime.utcnow().isoformat(),
-            "summary": {
-                "users": total_users,
-                "products": total_products,
-                "gross_income": gross_income
-            },
-            "traffic_sources": traffic
-        }
+        # === Агрегаты ===
+        total_applications = summary.get("applications", 0)
+        approved = summary.get("approved", 0)
+        pending = summary.get("pending", 0)
+        rejected = summary.get("rejected", 0)
+        gross_income = summary.get("gross_income", 0)
 
-        json_data = json.dumps(
-            report,
-            ensure_ascii=False,
-            indent=2
-        )
-
+        # === JSON-файл ===
         document = BufferedInputFile(
-            json_data.encode("utf-8"),
+            snapshot_json.encode("utf-8"),
             filename=f"weekly_report_{datetime.utcnow().strftime('%Y-%m-%d')}.json"
         )
 
-        # --- текстовая сводка ---
-        top_sources = sorted(
-            traffic,
-            key=lambda x: x["users"],
+        # === Топ банков ===
+        top_banks = sorted(
+            by_bank,
+            key=lambda x: x.get("applications", 0),
             reverse=True
         )[:5]
 
-        sources_text = "\n".join(
-            f"• <b>{row['traffic_source'] or 'unknown'}</b>: {row['users']} юзеров, {row['products']} оформлений"
-            for row in top_sources
+        banks_text = "\n".join(
+            f"• <b>{row['bank']}</b>: "
+            f"{row['applications']} заявок, "
+            f"{row['approved']} подтверждено, "
+            f"{row['gross_income']} ₽"
+            for row in top_banks
         ) or "—"
 
+        # === Текстовая сводка ===
         caption = (
-            "📆 <b>Еженедельный отчёт</b>\n\n"
-            f"👥 Пользователей: <b>{total_users}</b>\n"
-            f"📝 Оформлений: <b>{total_products}</b>\n"
-            f"💰 Оценка дохода (gross): <b>{gross_income} ₽</b>\n\n"
-            "📊 <b>Трафик по источникам:</b>\n"
-            f"{sources_text}\n\n"
-            "<i>Доход рассчитан ориентировочно на основе офферов. "
-            "Фактические выплаты определяются банком.</i>"
+            "📆 <b>Еженедельный отчёт</b>\n"
+            f"<i>{snapshot.get('period')}</i>\n\n"
+            f"📝 Заявок: <b>{total_applications}</b>\n"
+            f"✅ Подтверждено: <b>{approved}</b>\n"
+            f"⏳ В ожидании: <b>{pending}</b>\n"
+            f"❌ Отклонено: <b>{rejected}</b>\n"
+            f"💰 Gross доход: <b>{gross_income} ₽</b>\n\n"
+            "🏦 <b>Топ банков:</b>\n"
+            f"{banks_text}\n\n"
+            "<i>Отчёт сформирован на основе заявок. "
+            "Фактические выплаты определяются банками.</i>"
         )
 
-        # --- отправка ---
+        # === Отправка админам ===
         for admin_id in settings.ADMIN_IDS:
             try:
                 await bot.send_document(
-                    admin_id,
-                    document,
+                    chat_id=admin_id,
+                    document=document,
                     caption=caption,
                     parse_mode="HTML"
                 )
@@ -85,12 +83,16 @@ async def send_weekly_report(bot: Bot):
 
     except Exception as e:
         print(f"❌ Ошибка weekly_report_job: {e}")
+
         for admin_id in settings.ADMIN_IDS:
             try:
                 await bot.send_message(
-                    admin_id,
-                    f"❌ Ошибка генерации weekly-отчёта:\n<code>{str(e)[:300]}</code>",
+                    chat_id=admin_id,
+                    text=(
+                        "❌ Ошибка генерации weekly-отчёта:\n"
+                        f"<code>{str(e)[:300]}</code>"
+                    ),
                     parse_mode="HTML"
                 )
-            except:
+            except Exception:
                 pass

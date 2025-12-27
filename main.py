@@ -7,7 +7,8 @@ import logging
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram import Bot, Dispatcher
 from config import settings
-from database.db_manager import initialize_database, db_health_check
+from db.init import initialize_database
+from db.base import db_health_check
 from core.bot_instance import setup_bot
 from aiogram.types import BotCommand
 from apscheduler.schedulers.asyncio import AsyncIOScheduler

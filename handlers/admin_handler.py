@@ -1,34 +1,46 @@
 import logging
-from config import settings
+import pyshorteners
+import asyncio
+
 from aiogram import Router, F, types
-from aiogram.types import CallbackQuery, Message
-from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from database.db_manager import (
-    update_referral_link,
-    delete_user_all_data,
-    upsert_offer,
-)
-from utils.keyboards import get_start_kb, get_admin_panel_kb
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from utils.keyboards import get_admin_panel_kb
+from utils.traffic_sources import TRAFFIC_SOURCES, DEFAULT_SOURCE
+from db.banks import get_active_banks
+from db.products import get_products_by_bank
+from db.variants import get_variants_by_product
+from db.referrals import update_referral_link
 
-router = Router()
 logger = logging.getLogger(__name__)
+router = Router()
 
-
-NPD_RATE = 0.06
-
-SUPPORTED_BANKS = {
-    "t-bank": "Т-Банк",
-    "alpha": "Альфа-Банк"
-}
-
-
+# --------------------
+# Админские проверки
+# --------------------
 def is_admin(user_id: int) -> bool:
+    from config import settings
     return user_id in settings.ADMIN_IDS
 
+# --------------------
+# FSM состояния
+# --------------------
+class UpdateLinkFSM:
+    select_bank = "update_link_select_bank"
+    select_product = "update_link_select_product"
+    select_variant = "update_link_select_variant"
+    input_link = "update_link_input"
+
+
+# =========================
+# Админ-панель
+# =========================
 @router.callback_query(F.data == "admin_panel")
 async def admin_panel(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("🚫 Доступ запрещён.", show_alert=True)
+
     await callback.message.edit_text(
         "🛠 <b>Админ-меню</b>",
         reply_markup=get_admin_panel_kb(),
@@ -36,182 +48,166 @@ async def admin_panel(callback: types.CallbackQuery):
     )
     await callback.answer()
 
+# -----------------------------
+# Шаг 1: выбрать банк
+# -----------------------------
 @router.callback_query(F.data == "admin_update_links")
-async def handle_update_link_button(callback: CallbackQuery):
+async def handle_update_link_button(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("🚫 Доступ запрещён.", show_alert=True)
         return
 
-    await callback.answer()
-    await callback.message.answer(
-    "📌 Отправьте команду в формате:\n"
-    "<code>/update_link [банк] [продукт] [ссылка] [utm-параметры...]</code>\n\n"
-
-    "<b>Примеры:</b>\n"
-    "<code>/update_link t-bank black_aroma https://www.tbank.ru/finance/blog/aroma-black/ "
-    "utm_source=ValidateReferrals_Bot utm_medium=telegram utm_campaign=black_aroma</code>\n\n"
-
-    "<code>/update_link t-bank black_drive https://www.tbank.ru/cards/debit-cards/drive/promo/form/short/partners/ "
-    "utm_source=ValidateReferrals_Bot utm_medium=telegram utm_campaign=black_drive</code>\n\n"
-
-    "<code>/update_link alpha main https://alfabank.ru/ref?partner=123 "
-    "utm_source=ValidateReferrals_Bot utm_medium=telegram utm_campaign=alpha_main</code>\n\n"
-
-    "При добавлении или обновлении реферальной ссылки\n"
-    "используйте стандартные UTM-метки без вложенных параметров.\n\n"
-
-    "<b>Рекомендуемый формат:</b>\n\n"
-    "utm_source   — источник трафика\n"
-    "  Пример: <code>ValidateReferrals_Bot</code>\n\n"
-
-    "utm_medium   — тип канала\n"
-    "  Пример: <code>telegram</code>\n\n"
-
-    "utm_campaign — кампания или оффер\n"
-    "  Пример: <code>black_golden_ticket_dec25</code>\n\n"
-
-    "<b>Пример корректной ссылки:</b>\n"
-    "<code>https://example.com/offer?"
-    "utm_source=ValidateReferrals_Bot"
-    "&utm_medium=telegram"
-    "&utm_campaign=black_golden_ticket_dec25</code>\n\n"
-
-    "❗ <b>Не используйте значения вида:</b>\n"
-    "<code>utm_source=utm_source=...</code>\n"
-    "<code>utm_medium=utm_medium=...</code>\n\n"
-
-    "<b>Поддерживаемые банки:</b> <code>t-bank</code>, <code>alpha</code>\n\n"
-    "<b>Продукты для t-bank:</b>\n"
-    "• <code>black_classic</code> — обычная Black\n"
-    "• <code>black_aroma</code> — аромакарта\n"
-    "• <code>black_youth</code> — молодёжная\n"
-    "• <code>black_retro</code> — ретро\n"
-    "• <code>black_drive</code> — карта для авто\n"
-    "• <code>black_premium</code> — премиальная карта\n"
-    "• <code>main</code> — fallback (для alpha или общих ссылок)",
-    parse_mode="HTML"
-)
-
-
-
-@router.message(Command("update_link"))
-async def cmd_update_link(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        await message.answer("🚫 Доступ запрещён.")
+    banks = await get_active_banks()
+    if not banks:
+        await callback.answer("❌ Нет активных банков", show_alert=True)
         return
 
-    try:
-        parts = message.text.split()
-        if len(parts) < 7:
-            await message.answer("Формат: /update_link банк продукт url utm_source utm_medium utm_campaign")
-            return
-        
-        bank = parts[1]          # t-bank или alpha
-        product_key = parts[2]   # black_classic, alpha_debit и т.д.
-        base_url = parts[3]      # URL
-        utm_source = parts[4]    # telegram
-        utm_medium = parts[5]    # referral  
-        utm_campaign = parts[6]  # default
-        
-        success = await update_referral_link(
-            bank=bank,
-            product_key=product_key,
-            base_url=base_url,
-            utm_source=utm_source,
-            utm_medium=utm_medium,
-            utm_campaign=utm_campaign,
+    builder = InlineKeyboardBuilder()
+    for b in banks:
+        builder.button(
+            text=b["bank_title"],
+            callback_data=f"{UpdateLinkFSM.select_bank}:{b['bank_key']}"
         )
-        
-        if success:
-            await message.answer(f"✅ Ссылка для {bank}/{product_key} обновлена!")
-        else:
-            await message.answer("❌ Ошибка при обновлении ссылки")
-            
-    except Exception as e:
-        await message.answer(f"Ошибка: {str(e)}")
+    builder.adjust(2)
+    kb = builder.as_markup()
 
-@router.message(Command("set_offer_bonus"))
-async def cmd_set_offer_bonus(message: Message):
-    if message.from_user.id not in settings.ADMIN_IDS:
-        await message.answer("🚫 Команда доступна только администратору.")
+    await callback.message.answer(
+        "📌 Выберите банк для обновления реферальной ссылки:",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+# -----------------------------
+# Шаг 2: выбрать продукт
+# -----------------------------
+@router.callback_query(F.data.startswith(UpdateLinkFSM.select_bank + ":"))
+async def select_bank(callback: types.CallbackQuery, state: FSMContext):
+    bank_key = callback.data.split(":")[1]
+    await state.update_data(bank_key=bank_key)
+
+    products = await get_products_by_bank(bank_key)
+    if not products:
+        await callback.message.answer("⚠️ У банка нет продуктов")
+        await state.clear()
         return
 
-    args = message.text.split()
-    if len(args) != 4:
-        await message.answer(
-            "❌ Неверный формат.\n\n"
-            "<code>/set_offer_bonus [банк] [продукт] [сумма]</code>\n\n"
-            "<b>Примеры:</b>\n"
-            "<code>/set_offer_bonus t-bank black_youth 3000</code>\n"
-            "<code>/set_offer_bonus alpha debit 1500</code>",
+    builder = InlineKeyboardBuilder()
+    for p in products:
+        builder.button(
+            text=p.get("product_name") or p.get("title") or str(p.get("product_key")),
+            callback_data=f"{UpdateLinkFSM.select_product}:{p.get('product_key')}"
+        )
+    builder.adjust(2)
+    kb = builder.as_markup()
+
+    await state.set_state(UpdateLinkFSM.select_product)
+    await callback.message.answer(
+        "📌 Выберите продукт:",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+# -----------------------------
+# Шаг 3: выбрать вариант
+# -----------------------------
+@router.callback_query(F.data.startswith(UpdateLinkFSM.select_product + ":"))
+async def select_product(callback: types.CallbackQuery, state: FSMContext):
+    product_key = callback.data.split(":")[1]
+    await state.update_data(product_key=product_key)
+
+    data = await state.get_data()
+    bank_key = data["bank_key"]
+    variants = await get_variants_by_product(bank_key, product_key)
+
+    if not variants:
+        # Нет вариантов — сразу идем к вводу ссылки
+        await state.set_state(UpdateLinkFSM.input_link)
+        await callback.message.answer(
+            "📌 Введите ссылку от банка (без UTM, они будут сгенерированы автоматически):\n"
+            "Пример:\n<code>https://example.com/offer</code>",
             parse_mode="HTML"
         )
+        await callback.answer()
         return
 
-    bank = args[1].lower()
-    product_key = args[2].lower()
-
-    if bank not in SUPPORTED_BANKS:
-        await message.answer(
-            f"❌ Неизвестный банк.\n"
-            f"Доступны: {', '.join(SUPPORTED_BANKS.keys())}"
+    builder = InlineKeyboardBuilder()
+    for v in variants:
+        builder.button(
+            text=v["title"],
+            callback_data=f"{UpdateLinkFSM.select_variant}:{v['variant_key']}"
         )
-        return
+    builder.adjust(2)
+    kb = builder.as_markup()
 
-    try:
-        gross_bonus = int(args[3])
-        if gross_bonus <= 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("❌ Сумма должна быть положительным целым числом.")
-        return
-
-    # Пока product_name = product_key (позже можно сделать словарь)
-    product_name = product_key.replace("_", " ").title()
-
-    await upsert_offer(
-        bank=bank,
-        product_key=product_key,
-        product_name=product_name,
-        gross_bonus=gross_bonus
+    await state.set_state(UpdateLinkFSM.select_variant)
+    await callback.message.answer(
+        "📌 Выберите вариант (или 'Без варианта'):",
+        reply_markup=kb
     )
+    await callback.answer()
 
-    net_bonus = int(gross_bonus * (1 - NPD_RATE))
+# -----------------------------
+# Шаг 4: вариант выбран → ввод ссылки
+# -----------------------------
+@router.callback_query(F.data.startswith(UpdateLinkFSM.select_variant + ":"))
+async def select_variant(callback: types.CallbackQuery, state: FSMContext):
+    variant_key = callback.data.split(":")[1]
+    if variant_key == "none":
+        variant_key = None
+    await state.update_data(variant_key=variant_key)
+    await state.set_state(UpdateLinkFSM.input_link)
 
-    await message.answer(
-        "✅ <b>Оффер обновлён</b>\n\n"
-        f"🏦 <b>Банк:</b> {SUPPORTED_BANKS[bank]}\n"
-        f"📦 <b>Продукт:</b> <code>{product_key}</code>\n"
-        f"💰 <b>Брутто:</b> {gross_bonus:,} ₽\n"
-        f"🧾 <b>НПД 6%:</b> {gross_bonus - net_bonus:,} ₽\n"
-        f"✅ <b>Нетто:</b> {net_bonus:,} ₽",
+    await callback.message.answer(
+        "📌 Введите ссылку от банка (без UTM, они будут сгенерированы автоматически):\n"
+        "Пример:\n<code>https://example.com/offer</code>",
         parse_mode="HTML"
     )
+    await callback.answer()
 
-
-    
-@router.message(Command("delete_data"))
-async def cmd_delete_data(message: types.Message, state: FSMContext):
-    """
-    DEV-ONLY.
-    Используется администратором для тестирования онбординга.
-    В проде подлежит удалению или ограничению.
-    """
+# -----------------------------
+# Шаг 5: сохранение ссылки
+# -----------------------------
+@router.message(F.text)
+async def update_link_input(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id):
-        await message.answer("🚫 Доступ запрещён.")
         return
-    
-    user_id = message.from_user.id
 
-    success = await delete_user_all_data(user_id)
+    data = await state.get_data()
+    bank_key = data.get("bank_key")
+    product_key = data.get("product_key")
+    variant_key = data.get("variant_key")
+
+    if not bank_key or not product_key:
+        await message.answer("❌ Ошибка состояния. Попробуйте начать заново.")
+        await state.clear()
+        return
+
+    base_url = message.text.strip()
+
+    if not base_url.startswith(("http://", "https://")):
+        await message.answer("❌ URL должен начинаться с http:// или https://")
+        return
+
+    success = await update_referral_link(
+        bank_key=bank_key,
+        product_key=product_key,
+        variant_key=variant_key,
+        base_url=base_url,
+        utm_source=None,
+        utm_medium=None,
+        utm_campaign=None
+    )
+
     if success:
         await message.answer(
-            "✅ Ваши данные удалены. Вы можете начать регистрацию заново.",
-            reply_markup=get_start_kb()
+            f"✅ Ссылка успешно сохранена!\n\n"
+            f"Банк: {bank_key}\n"
+            f"Продукт: {product_key}\n"
+            f"Вариант: {variant_key or '—'}\n\n"
+            f"🔗 Оригинальная ссылка:\n{base_url}"
         )
-        await state.clear()
     else:
-        await message.answer(
-            "Вы не найдены в базе данных. Нажмите «Начать регистрацию», чтобы создать профиль.",
-            reply_markup=get_start_kb()
-        )
+        await message.answer("❌ Ошибка при сохранении ссылки")
+
+    await state.clear()
+

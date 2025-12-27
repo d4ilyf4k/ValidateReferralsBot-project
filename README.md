@@ -150,7 +150,6 @@
 |---|---|---|
 |`user_id`|INTEGER (PK)|Да|
 |`full_name`|TEXT|Да|
-|`phone_enc`|BLOB|Да (шифр.)|
 |`bank`|TEXT|Да|
 |`created_at`|DATETIME|Да|
 

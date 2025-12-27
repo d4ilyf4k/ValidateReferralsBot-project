@@ -1,16 +1,14 @@
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 
-from database.db_manager import (
+from db.users import (
     get_user_full_data,
     update_user_field,
-    update_user_phone
 )
 
 from config import settings
 from utils.keyboards import (
     get_edit_profile_kb,
-    get_phone_kb,
     get_user_main_menu_kb,
     get_admin_panel_kb
 )
@@ -22,7 +20,6 @@ router = Router()
 # =========================
 # Профиль пользователя
 # =========================
-
 @router.message(F.text == "✏️ Редактировать профиль")
 async def edit_profile(message: types.Message):
     user_data = await get_user_full_data(message.from_user.id)
@@ -30,10 +27,13 @@ async def edit_profile(message: types.Message):
         await message.answer("Сначала завершите регистрацию с помощью /start.")
         return
 
+    traffic_label = user_data.get("traffic_source", "organic").capitalize()
+
     profile_text = (
         "👤 <b>Ваш профиль</b>\n\n"
         f"ФИО: {user_data['full_name']}\n"
         f"Банк(и): {', '.join(user_data.get('banks', [])) or '—'}\n"
+        f"Источник: {traffic_label}\n"
     )
 
     await message.answer(
@@ -46,7 +46,6 @@ async def edit_profile(message: types.Message):
 # =========================
 # Выбор поля для редактирования
 # =========================
-
 @router.callback_query(F.data.startswith("edit_"))
 async def handle_edit_field(callback: types.CallbackQuery, state: FSMContext):
     field = callback.data[5:]
@@ -54,13 +53,6 @@ async def handle_edit_field(callback: types.CallbackQuery, state: FSMContext):
     if field == "full_name":
         await state.set_state(ProfileEdit.full_name)
         await callback.message.answer("Введите новое ФИО:")
-
-    elif field == "phone":
-        await state.set_state(ProfileEdit.phone)
-        await callback.message.answer(
-            "Отправьте свой номер телефона:",
-            reply_markup=get_phone_kb()
-        )
 
     elif field == "bank":
         await callback.message.answer(
@@ -73,7 +65,6 @@ async def handle_edit_field(callback: types.CallbackQuery, state: FSMContext):
 # =========================
 # Обработка ФИО
 # =========================
-
 @router.message(ProfileEdit.full_name)
 async def process_full_name(message: types.Message, state: FSMContext):
     full_name = message.text.strip()
@@ -89,7 +80,6 @@ async def process_full_name(message: types.Message, state: FSMContext):
 # =========================
 # Обработка телефона
 # =========================
-
 @router.message(ProfileEdit.phone, F.contact)
 async def process_phone(message: types.Message, state: FSMContext):
     if message.contact.user_id != message.from_user.id:
@@ -99,18 +89,14 @@ async def process_phone(message: types.Message, state: FSMContext):
         )
         return
 
-    success = await update_user_phone(
-        message.from_user.id,
-        message.contact.phone_number
-    )
-
-    if not success:
-        await message.answer("❌ Не удалось сохранить номер. Попробуйте позже.")
-        return
-
+    phone = message.contact.phone_number
+    await update_user_field(message.from_user.id, "phone", phone)
     await _finalize_profile_edit(message, state)
 
 
+# =========================
+# Финализация редактирования
+# =========================
 async def _finalize_profile_edit(obj, state: FSMContext):
     is_admin = obj.from_user.id in settings.ADMIN_IDS
     menu_kb = get_admin_panel_kb() if is_admin else get_user_main_menu_kb()
@@ -121,4 +107,3 @@ async def _finalize_profile_edit(obj, state: FSMContext):
         await obj.message.answer("✅ Профиль обновлён!", reply_markup=menu_kb)
 
     await state.clear()
-    

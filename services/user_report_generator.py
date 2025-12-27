@@ -1,5 +1,4 @@
-from database.db_manager import get_user_products_for_finance
-from aiogram.types import InlineKeyboardMarkup
+from db.finance import get_user_applications
 
 BANK_TITLES = {
     "t-bank": "Т-Банк",
@@ -14,9 +13,9 @@ BANK_LABELS = {
 }
 
 async def generate_user_finance_report(user_id: int) -> str:
-    products = await get_user_products_for_finance(user_id)
+    applications = await get_user_applications(user_id)
     
-    if not products:
+    if not applications:
         return (
             "💰 <b>Финансовый отчёт</b>\n\n"
             "У вас пока нет оформленных продуктов.\n\n"
@@ -29,19 +28,20 @@ async def generate_user_finance_report(user_id: int) -> str:
         "<i>Информация носит справочный характер.</i>\n"
     ]
 
-    for p in products:
-        bank_label = BANK_LABELS.get(p["bank"], p["bank"])
+    for app in applications:
+        bank_label = BANK_LABELS.get(app["bank_key"], app["bank_key"])
 
-    lines.append(
-        f"{bank_label}\n"
-        f"• Продукт: {p['product_name']}\n"
-        f"• Статус: передано банку\n"
-    )
-
+        lines.append(
+            f"{bank_label}\n"
+            f"• Продукт: {app['product_key']}\n"
+            f"• Статус: передано банку\n"
+            f"• Дата оформления: {app['created_at']}\n"
+        )
+    
     lines.append(
         "\nℹ️ <b>Важно:</b>\n"
-        "Бот не начисляет бонусы.\n"
-        "Бонусы и сроки зачисления определяются банком."
+        "Начисление бонусов осуществляется банком\n"
+        "в соответствии с его правилами и сроками."
     )
 
     return "\n".join(lines)

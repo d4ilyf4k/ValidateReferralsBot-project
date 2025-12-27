@@ -1,30 +1,19 @@
 from aiogram import Router, F, types
-from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 from config import settings
-from database.db_manager import (
-    confirm_user_bonus,
-    reject_user_bonus,
+from db.finance import (
     get_admin_finance_details,
     get_admin_finance_summary,
-    get_admin_traffic_overview,
     get_admin_traffic_finance_projection,
-    get_or_create_user_product,
-    get_referral_link,
 )
+
+from db.finance import get_admin_traffic_overview
 from services.referrer_report_generator import generate_admin_dashboard_text
 from utils.keyboards import (
-    get_user_main_menu_kb,
     get_admin_panel_kb,
     get_admin_dashboard_kb,
     get_admin_finance_kb,
     get_admin_traffic_filter_kb,
-    get_agreement_kb,
-    get_bank_kb,
-)
-from handlers.bank_handler import (
-    _get_conditions_text,
-    _get_detailed_conditions_text,
 )
 
 router = Router()
@@ -37,49 +26,6 @@ def is_admin(user_id: int) -> bool:
 # ==========================
 # ADMIN PANEL
 # ==========================
-
-@router.callback_query(F.data == "menu_admin")
-async def open_admin_panel(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("🚫 Доступ запрещён.", show_alert=True)
-
-    await callback.message.edit_text(
-        "🛠 <b>Админ-панель</b>\nВыберите действие:",
-        reply_markup=get_admin_panel_kb(),
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("bonus:"))
-async def handle_bonus_action(call: types.CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Нет доступа", show_alert=True)
-        return
-
-    _, action, user_id, bank, product_key = call.data.split(":")
-
-    user_id = int(user_id)
-
-    if action == "confirm":
-        success = await confirm_user_bonus(user_id, bank, product_key)
-        text = "✅ Бонус подтверждён" if success else "⚠️ Уже обработан"
-
-    elif action == "reject":
-        success = await reject_user_bonus(user_id, bank, product_key)
-        text = "❌ Бонус отклонён" if success else "⚠️ Уже обработан"
-
-    else:
-        await call.answer("Неизвестное действие", show_alert=True)
-        return
-
-    # UX: обновляем сообщение
-    await call.message.edit_text(
-        call.message.text + f"\n\n<b>{text}</b>",
-        parse_mode="HTML"
-    )
-    await call.answer()
-
 
 @router.callback_query(F.data == "admin:finance")
 async def admin_finance_root(callback: CallbackQuery):
@@ -166,9 +112,6 @@ async def admin_dashboard(callback: types.CallbackQuery):
     )
     await callback.answer()
     
-
-
-
     
 @router.callback_query(F.data == "admin:traffic")
 async def admin_traffic_root(cb: CallbackQuery):
@@ -271,122 +214,3 @@ async def admin_back(callback: CallbackQuery):
         parse_mode="HTML"
     )
     await callback.answer()
-    
-
-# ==========================
-# BANK AGREEMENT FLOW
-# ==========================
-
-@router.callback_query(F.data == "agree_conditions")
-async def agree_conditions(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-
-    if not all(k in data for k in ("bank_key", "product_key", "product_name")):
-        await callback.answer("⚠️ Сессия устарела, начните заново", show_alert=True)
-        await state.clear()
-        return
-
-    user_id = callback.from_user.id
-
-    await get_or_create_user_product(
-        user_id,
-        data["bank_key"],
-        data["product_key"],
-        data["product_name"]
-    )
-
-    link = await get_referral_link(data["bank_key"], data["product_key"])
-
-    if not link:
-        await callback.message.edit_text("⚠️ Ссылка временно недоступна")
-        await state.clear()
-        return
-
-    await callback.message.edit_text(
-        f"<b>🎉 Ваша персональная ссылка на {data['product_name']}:</b>\n\n"
-        f"{link}",
-        parse_mode="HTML"
-    )
-
-    await callback.message.answer(
-        "Главное меню:",
-        reply_markup=get_user_main_menu_kb()
-    )
-
-    await state.clear()
-    await callback.answer()
-
-
-@router.callback_query(F.data == "show_details")
-async def show_details(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    product_key = data.get("product_key")
-    product_name = data.get("product_name", "продукт")
-
-    if not product_key:
-        await callback.answer("❌ Продукт не найден.", show_alert=True)
-        return
-
-    text = _get_detailed_conditions_text(product_key, product_name)
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_agreement_kb()
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "disagree_conditions")
-async def agree_fallback(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-
-    await callback.message.edit_text(
-        "❌ Без согласия с условиями участие невозможно.\n\n"
-        "Если передумаете — нажмите /start"
-    )
-
-
-
-@router.callback_query(F.data == "back_to_summary")
-async def back_to_summary(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    product_key = data.get("product_key")
-    product_name = data.get("product_name")
-
-    if not product_key:
-        await callback.answer("❌ Продукт не выбран.", show_alert=True)
-        return
-
-    text = _get_conditions_text(product_key, product_name)
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_agreement_kb()
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "back_to_banks")
-async def back_to_banks(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-
-    await callback.message.answer(
-        "🏦 Выберите банк:",
-        reply_markup=get_bank_kb()
-    )
-
-    await callback.answer()
-
-
-# ==========================
-# COMMON
-# ==========================
-
-@router.callback_query(F.data == "cancel_edit")
-async def cancel_edit(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.answer("Отменено")
-    await callback.message.answer(
-        "Вы в главном меню:",
-        reply_markup=get_user_main_menu_kb()
-    )

@@ -1,5 +1,7 @@
 from aiogram.fsm.state import State, StatesGroup
-
+# =========================
+# FSM STATES
+# =========================
 class Onboarding(StatesGroup):
     full_name = State()
     phone = State()
@@ -25,3 +27,27 @@ class BankAgreement(StatesGroup):
 class AdminStates(StatesGroup):
     finance_referral_phone = State()
     waiting_bonus_amount = State()
+    
+class AddOfferFSM(StatesGroup):
+    product_key = State()
+    title = State()
+    conditions = State()
+    gross_bonus = State()
+    confirm = State()
+    
+class AddProductFSM(StatesGroup):
+    bank = State()
+    product_key = State()
+    product_name = State()
+    description = State()
+
+class AdminAddVariant(StatesGroup):
+    bank = State()
+    product_name = State()
+    product_key = State()
+    
+class AdminAddOffer(StatesGroup):
+    product_key = State()
+    title = State()
+    conditions = State()
+    details = State()

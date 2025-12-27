@@ -1,576 +1,266 @@
+import logging
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
-from aiogram.filters import StateFilter
-from database.db_manager import get_referral_link, get_or_create_user_product
-from utils.states import BankAgreement
-from utils.keyboards import (
-    get_bank_kb,
-    get_tbank_product_kb,
-    get_black_subtype_kb,
-    get_agreement_kb,
-    get_detailed_conditions_kb,
-    get_user_main_menu_kb
-)
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from urllib.parse import urlparse, urlencode, urlunparse, parse_qs
+from utils.traffic_sources import DEFAULT_SOURCE
+from utils.keyboards import get_user_bank_kb, get_user_main_menu_kb
+from db.banks import get_active_banks
+from db.products import get_products_by_bank
+from db.variants import get_variants
+from db.offers import get_offer_by_id
+from db.referrals import get_referral_link, shorten_link
 
 router = Router()
+logger = logging.getLogger(__name__)
+
+# -------------------- FSM --------------------
+class UserCatalogFSM(StatesGroup):
+    choosing_bank = State()
+    choosing_product = State()
+    choosing_variant = State()
+    viewing_conditions = State()
 
 
+# -------------------- helpers --------------------
+def append_utm(url: str, query: dict) -> str:
+    if isinstance(url, bytes):
+        url = url.decode("utf-8")
+    parsed = urlparse(url)
+    query_str = {k: str(v) for k, v in query.items() if v is not None}
+    return urlunparse(parsed._replace(query=urlencode(query_str)))
+
+
+def build_kb(items: list[dict], callback_prefix: str, back: str | None = None) -> types.InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for item in items:
+        key = item.get('product_key')
+        if not key:
+            continue
+        kb.button(
+            text=item.get("title", str(key)),
+            callback_data=f"{callback_prefix}:{key}"
+        )
+    if back:
+        kb.button(text="⬅ Назад", callback_data=back)
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+async def build_final_referral_url(
+    base_url: str,
+    bank_key: str,
+    product_key: str,
+    variant_key: str | None,
+    traffic_source: str
+) -> str:
+    utm_source = "ReferralFlowBot"
+    utm_medium = traffic_source
+    utm_campaign = variant_key or product_key
+
+    parsed = urlparse(base_url)
+    existing = parse_qs(parsed.query)
+
+    merged = {
+        **existing,
+        "utm_source": utm_source,
+        "utm_medium": utm_medium,
+        "utm_campaign": utm_campaign,
+    }
+
+    merged = {
+        k: v[0] if isinstance(v, list) else v
+        for k, v in merged.items()
+    }
+
+    final_url = urlunparse(
+        parsed._replace(query=urlencode(merged))
+    )
+
+    short_url = await shorten_link(final_url)
+
+    return short_url
+
+
+# -------------------- start: choose_bank --------------------
 @router.message(F.text == "🏦 Выбрать банк")
 async def choose_bank(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("🏦 Выберите банк:", reply_markup=get_bank_kb())
+    await state.set_state(UserCatalogFSM.choosing_bank)
 
-@router.message(F.text.in_(["🏦 Т-Банк", "🏦Т-Банк"]))
-async def select_tbank(message: types.Message, state: FSMContext):
-    await state.set_state(BankAgreement.choosing_tbank_product)
-    await state.update_data(bank_key="t-bank")
-    
-    await message.answer(
-        "<b>🏦 Т-Банк | Выбор продукта по партнёрской программе</b>\n\n"
-        "🔷 <b>Tinkoff Black</b>\n"
-        "🏆 <b>Premium</b>\n"
-        "🚗 <b>Drive</b>\n"
-        "📱 <b>T-Mobile</b>",
-        parse_mode="HTML",
-        reply_markup=get_tbank_product_kb()
-    )
+    kb = await get_user_bank_kb()
+    await message.answer("🏦 Выберите банк:", reply_markup=kb)
 
+# -------------------- choose_product --------------------
+@router.message(UserCatalogFSM.choosing_bank, F.text.startswith("🏦"))
+async def bank_selected(message: types.Message, state: FSMContext):
+    bank_title = message.text.replace("🏦", "").strip()
+    banks = await get_active_banks()
+    bank = next((b for b in banks if b["bank_title"] == bank_title), None)
 
-@router.message(F.text.in_(["🏦 Альфа-Банк", "🏦Альфа-Банк"]))
-async def select_alpha(message: types.Message, state: FSMContext):
-    product_key = "alpha_debit"
-    product_name = "Дебетовая карта Альфа-Банка"
-    await state.set_state(BankAgreement.waiting_agreement)
-    await state.update_data(
-        bank_key="alpha",
-        product_key=product_key,
-        product_name=product_name
-    )
+    if not bank:
+        await message.answer("⚠️ Банк не найден")
+        return
 
-    await message.answer(
-        _get_conditions_text(product_key, product_name),
-        parse_mode="HTML",
-        reply_markup=get_agreement_kb()
-    )
+    await state.update_data(bank_key=bank["bank_key"])
+    await state.set_state(UserCatalogFSM.choosing_product)
+
+    products = await get_products_by_bank(bank["bank_key"])
+    if not products:
+        await message.answer("⚠️ Продукты временно недоступны")
+        return
+
+    kb = build_kb(products, "user_product")
+    await message.answer("💳 <b>Выберите продукт:</b>", reply_markup=kb, parse_mode="HTML")
 
 
-@router.callback_query(
-    F.data.startswith("tbank_"),
-    StateFilter(BankAgreement.choosing_tbank_product)
-)
-async def choose_tbank_product(callback: types.CallbackQuery, state: FSMContext):
-    product_key = callback.data
+# -------------------- choose_variant --------------------
+@router.callback_query(UserCatalogFSM.choosing_product, F.data.startswith("user_product:"))
+async def choose_variant(callback: types.CallbackQuery, state: FSMContext):
+    product_key = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    bank_key = data.get("bank_key")
+    if not bank_key:
+        raise RuntimeError("FSM missing bank_key before choose_variant")
 
-    if product_key == "tbank_black":
-        await state.set_state(BankAgreement.choosing_black_subtype)
-        await callback.message.edit_text(
-            "<b>Выберите тип Tinkoff Black:</b>\n\n"
-            "🔷 <b>Классическая</b>\n"
-            "🌸 <b>Аромакарта</b>\n"
-            "🎓 <b>Молодёжная</b>\n"
-            "📼 <b>Ретро</b>",
-            parse_mode="HTML",
-            reply_markup=get_black_subtype_kb()
+    await state.update_data(product_key=product_key)
+    variants = await get_variants(bank_key, product_key)
+
+    if not variants:
+        await state.update_data(variant_key=None)
+        await state.set_state(UserCatalogFSM.viewing_conditions)
+        await show_standard_conditions(callback, state)
+        return
+
+    await state.set_state(UserCatalogFSM.choosing_variant)
+    kb = build_kb(variants, "user_variant", back="user:back_to_products")
+    await callback.message.edit_text("🧩 <b>Выберите вариант:</b>", reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+
+# -------------------- show_standard_conditions --------------------
+async def show_standard_conditions(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    product_key = data.get("product_key")
+
+    if not product_key:
+        await callback.message.answer(
+            "❌ Ошибка: не выбран продукт. Вернитесь в меню.",
+            reply_markup=get_user_main_menu_kb()
         )
         await callback.answer()
         return
 
-    names = {
-        "tbank_drive": "Дебетовая карта Drive",
-        "tbank_premium": "Премиальная карта Т-Банка",
-        "tbank_mobile": "T-Mobile от Т-Банка"
-    }
+    kb = InlineKeyboardBuilder()
+    kb.button(text="❌ Отказаться", callback_data="offer_cancel")
+    kb.button(text="✅ Оформить", callback_data=f"offer_apply:{product_key}|0")
+    kb.adjust(1)
 
-    if product_key not in names:
-        await callback.answer("❌ Неизвестный продукт.", show_alert=True)
+    await callback.message.edit_text(
+        "📋 <b>Стандартные условия оформления</b>\n\n"
+        "После подтверждения вы получите ссылку для оформления.",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup()
+    )
+    await callback.answer()
+
+
+# -------------------- show_conditions --------------------
+@router.callback_query(UserCatalogFSM.choosing_variant, F.data.startswith("user_variant:"))
+async def show_conditions(callback: types.CallbackQuery, state: FSMContext):
+    variant_key = callback.data.split(":", 1)[1]
+
+    data = await state.get_data()
+    product_key = data.get("product_key")
+
+    offer = await get_offer_by_id(variant_key)
+    if not offer:
+        await show_standard_conditions(callback, state)
         return
 
     await state.update_data(
-        product_key=product_key,
-        product_name=names[product_key]
+        product_key=str(offer["product_key"]),
+        variant_key=str(variant_key)
     )
+    await state.set_state(UserCatalogFSM.viewing_conditions)
 
-    await state.set_state(BankAgreement.waiting_agreement)
-    await callback.message.edit_text(
-        _get_conditions_text(product_key, names[product_key]),
-        parse_mode="HTML",
-        reply_markup=get_agreement_kb()
-    )
-    await callback.answer()
-
-@router.callback_query(
-    F.data == "show_details",
-    StateFilter(BankAgreement.waiting_agreement)
-)
-async def show_detailed_conditions(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    product_key = data["product_key"]
-    product_name = data["product_name"]
-
-    text = _get_detailed_conditions_text(product_key, product_name)
+    kb = InlineKeyboardBuilder()
+    kb.button(text="❌ Отказаться", callback_data="offer_cancel")
+    kb.button(text="✅ Оформить", callback_data=f"offer_apply:{offer['product_key']}|{variant_key}")
+    kb.adjust(1)
 
     await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_detailed_conditions_kb()
-    )
-    await callback.answer()
-
-@router.callback_query(
-    F.data == "back_to_main",
-    StateFilter(BankAgreement.waiting_agreement)
-)
-async def back_to_main_conditions(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    product_key = data["product_key"]
-    product_name = data["product_name"]
-
-    text = _get_conditions_text(product_key, product_name)
-
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_agreement_kb()
-    )
-    await callback.answer()
-    
-@router.callback_query(
-    F.data.in_({"black_classic", "black_aroma", "black_youth", "black_retro"}),
-    StateFilter(BankAgreement.choosing_black_subtype)
-)
-async def choose_black_subtype(callback: types.CallbackQuery, state: FSMContext):
-    mapping = {
-        "black_classic": "Tinkoff Black",
-        "black_aroma": "Аромакарта Black",
-        "black_youth": "Молодёжная карта Black",
-        "black_retro": "Ретро-карта Black"
-    }
-
-    product_key = callback.data
-    product_name = mapping[product_key]
-
-    await state.update_data(
-        bank_key="t-bank",
-        product_key=product_key,
-        product_name=product_name
-    )
-
-    await state.set_state(BankAgreement.waiting_agreement)
-    await callback.message.edit_text(
-        _get_conditions_text(product_key, product_name),
-        parse_mode="HTML",
-        reply_markup=get_agreement_kb()
-    )
-    await callback.answer()
-
-
-@router.callback_query(
-    F.data == "agree_conditions",
-    StateFilter(BankAgreement.waiting_agreement)
-)
-async def process_agreement(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-
-    if not all(k in data for k in ("bank_key", "product_key", "product_name")):
-        await callback.answer("⚠️ Сессия устарела, начните заново", show_alert=True)
-        await state.clear()
-        return
-
-    user_id = callback.from_user.id
-    bank_key = data["bank_key"]
-    product_key = data["product_key"]
-    product_name = data["product_name"]
-
-    link = await get_referral_link(bank_key, product_key)
-    if not link:
-        await callback.message.edit_text("⚠️ Ссылка временно недоступна.")
-        await state.clear()
-        return
-
-    await get_or_create_user_product(
-        user_id=user_id,
-        bank=bank_key,
-        product_key=product_key,
-        product_name=product_name
-    )
-
-    await callback.message.edit_text(
-        f"<b>🎉 Ваша персональная ссылка на {product_name}:</b>\n\n"
-        f"{link}\n\n"
-        "<i>Ссылка ведёт на официальный сайт банка.</i>",
+        f"📋 <b>Условия:</b>\n\n{offer['offer_conditions']}",
+        reply_markup=kb.as_markup(),
         parse_mode="HTML"
     )
-
-    await callback.message.answer(
-        "Главное меню:",
-        reply_markup=get_user_main_menu_kb()
-    )
-
-    await state.clear()
     await callback.answer()
 
 
+# -------------------- apply_offer --------------------
+@router.callback_query(F.data.startswith("offer_apply:"))
+async def apply_offer(call: types.CallbackQuery, state: FSMContext):
+    try:
+        payload = call.data.split(":", 1)[1]
+        if not payload:
+            raise ValueError("Пустой payload offer_apply")
 
-@router.callback_query(
-    F.data == "disagree_conditions",
-    StateFilter(BankAgreement.waiting_agreement)
-)
-async def process_disagreement(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
-        "❌ Вы отказались от получения ссылки.\n\n"
-        "Вы можете вернуться и выбрать другой продукт.",
-        parse_mode="HTML"
-    )
-    await callback.message.answer("Главное меню:", reply_markup=get_user_main_menu_kb())
+        product_key, variant_key = payload.split("|") if "|" in payload else (payload, None)
+
+        if variant_key == "0":
+            variant_key = None
+
+        data = await state.get_data()
+        bank_key = data.get("bank_key")
+        traffic_source = data.get("traffic_source", DEFAULT_SOURCE)
+
+        if not bank_key:
+            raise ValueError("bank_key отсутствует в FSM")
+
+        base_url = await get_referral_link(
+            bank_key=bank_key,
+            product_key=str(product_key),
+            variant_key=str(variant_key) if variant_key else None,
+            shorten=False
+        )
+
+        if not base_url:
+            raise ValueError(
+                f"Ссылка не найдена (bank={bank_key}, product={product_key}, variant={variant_key})"
+            )
+
+        final_url = await build_final_referral_url(
+            base_url=base_url,
+            bank_key=bank_key,
+            product_key=str(product_key),
+            variant_key=str(variant_key) if variant_key else None,
+            traffic_source=traffic_source
+        )
+
+        await call.message.answer(
+            f"🔗 Ваша ссылка:\n{final_url}",
+            disable_web_page_preview=True,
+            reply_markup=get_user_main_menu_kb()
+        )
+        await state.clear()        
+        await call.answer()
+
+    except Exception:
+        logging.exception("apply_offer failed")
+
+        await call.message.answer(
+            "❌ Ссылка временно недоступна.\n"
+            "Пожалуйста, выберите продукт заново.",
+            reply_markup=get_user_main_menu_kb()
+        )
+        await call.answer()
+
+
+
+# -------------------- cancel_offer --------------------
+@router.callback_query(F.data == "offer_cancel")
+async def cancel_offer(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
+    await callback.message.answer("❌ Действие отменено", reply_markup=get_user_main_menu_kb())
     await callback.answer()
-
-
-def _get_conditions_text(product_key: str, product_name: str) -> str:
-    """
-    UX-функция.
-    Показывает пользователю условия оффера ДО выдачи ссылки.
-    Не участвует в расчётах и отчётах.
-    """
-    base = f"<b>🏦 {product_name}</b>\n\n"
-
-    if product_key == "black_classic":
-        return base + (
-            "🎄 <b>Акция «Золотой Билет»</b>\n"
-            "• Покупка от <b>500 ₽</b> → участие в розыгрыше до <b>5 000 000 ₽</b>\n"
-            "• Кэшбэк на сладости (по условиям акции)\n\n"
-
-            "<b>💳 Почему выбирают Black:</b>\n"
-            "• До 30% кэшбэка у партнёров\n"
-            "• До 15% в 4 категориях каждый месяц\n"
-            "• Бесплатные переводы и снятие наличных\n"
-            "• Бесплатные допкарты для близких\n\n"
-
-            "📋 <b>Условия для бонуса:</b>\n"
-            "• Быть новым клиентом Т‑Банка\n"
-            "• Оформить карту и потратить от 500 ₽ за 30 дней\n\n"
-            
-            "<i>🔒 Оформление происходит на официальном сайте банка.</i>\n"
-            "<i>Бот не запрашивает паспорт, коды из СМС и данные карты.</i>"
-        )
-
-    elif product_key == "black_aroma":
-        return base + (
-            "<b>🌸 Аромакарта Black</b>\n\n"
-
-            "Карта с ароматом шоколада и кокоса 🍫🥥\n"
-            "При этом — <b>полноценная Tinkoff Black</b>\n\n"
-
-            "<b>💳 Ваши преимущества:</b>\n"
-            "• До 30% кэшбэка у партнёров (маркетплейсы, косметика, электроника)\n"
-            "• До 15% в 4 категориях на выбор каждый месяц\n"
-            "• Бесплатные переводы и снятие\n"
-            "• Бесплатные допкарты\n\n"
-
-            "<b>📋 Условия:</b>\n"
-            "• Новый клиент Т‑Банка\n"
-            "• Оформить карту и потратить от 500 ₽ за 30 дней\n\n"
-            
-            "<i>🔒 Оформление — напрямую на сайте Т-Банка.</i>\n"
-            "<i>Бот не запрашивает паспорт, коды из СМС и данные карты.</i>"
-        )
-
-    elif product_key == "black_youth":
-        return base + (
-            "<b>🎓 Молодёжная карта (14–25 лет)</b>\n\n"
-            
-            "<b>1% кэшбэка за любые покупки</b> — без условий.\n\n"
-            
-            "<b>💳 Дополнительно:</b> "
-            "• До <b>15%</b> в 4 категориях на выбор\n"
-            "• До <b>30%</b> у партнёров\n"
-            "• <b>Бесплатный выпуск и обслуживание</b>\n\n"
-
-            "<b>📋 Условия:</b>\n"
-            "• Возраст: 14–25 лет \n"
-            "• Новый клиент Т‑Банка\n"
-            "• Покупка от <b>500 ₽</b> за 30 дней\n\n"
-
-            "⏱️ Бонус — в течение 10 раб. дней. Доставка — бесплатно.\n\n"
-            
-            "<i>🔒 Оформление — напрямую на сайте Т-Банка.</i>\n"
-            "<i>Бот лишь ведёт по партнёрской ссылке.</i>"
-        )
-    elif product_key == "black_retro":
-        return base + (
-            "<b>📼 Ретро-карта Black</b>\n\n"
-
-            "• Ностальгический дизайн в стиле 2000-х\n"
-            "<b>Ограниченный выпуск</b>.\n\n"
-
-            "<b>💳 Возможности:</b>\n"
-            "• Все плюсы Tinkoff Black\n"
-            "• Кэшбэк до <b>30%</b>\n"
-            "• Бесплатные переводы и снятие\n\n"
-
-            "<b>📋 Условия:</b>\n"
-            "• Новый клиент Т‑Банка\n"
-            "• Покупка от <b>500 ₽</b> за 30 дней\n\n"
-            
-            "<i>🔒 Все данные вводятся только на стороне банка.</i>\n"
-            "<i>Бот не запрашивает паспорт, коды из СМС и данные карты.</i>"
-        )
-
-    elif product_key == "tbank_drive":
-        return base + (
-            "<b>🚗 Tinkoff Drive</b>\n\n"
-            
-            "Бонус до 2000 ₽ от банка (по условиям акции) — для тех, кто за рулём.\n\n"
-            
-            "• Кэшбэк на АЗС, парковки, ремонт\n"
-            "• Бесплатный выпуск и доставка\n"
-            "• Бесплатные переводы и снятие без комиссии\n\n"
-
-            "<b>📋 Условия акции:</b>\n"
-            "• Потратить от <b>5000 ₽</b> за 30 дней\n"
-            "• Новый клиент Т-Банка\n"
-            "• Активация промокода <code>123GO</code>\n\n"
-
-            "⏱️ Бонус — в течение 10 раб. дней.\n\n"
-            
-            "<i>🔒 Бонус начисляет банк.</i>\n"
-            "<i>Бот не участвует в выплатах.</i>"
-        )
-
-    elif product_key == "tbank_mobile":
-        return base + (
-            "<b>📱 T-Mobile от Т‑Банка</b>\n\n"
-
-            "Бонус на счёт при подключении (по условиям партнёрской программы)\n\n"
-
-            "<b>💳 Преимущества:</b>\n"
-            "• Тарифы от 300 ₽/мес\n"
-            "• Кэшбэк за оплату связи\n"
-            "• Управление в приложении Т‑Банка\n"
-
-            "<b>📋 Условия:</b>\n"
-            "• Оформить сим-карту по партнёрской ссылке\n"
-            "• Используйте промокод <code>tpart500</code>\n"
-            "• Пополнение от <b>300 ₽</b>\n\n"
-
-            "⏱️ Бонус — в течение 5–10 раб. дней.\n"
-            
-            "<i>🔒 Подключение — напрямую у оператора.</i>"
-        )
-    elif product_key == "tbank_premium":
-        return base + (
-            "<b>🏆 Tinkoff Black Premium — премиум-карта с 1% за всё</b>\n\n"
-            "• <b>1% за все покупки</b> — даже без спецпредложений\n"
-            "• До <b>15%</b> в 4 категориях на выбор\n"
-            "• До <b>30%</b> у партнёров\n"
-            "• Персональный менеджер 24/7\n"
-            "• Бизнес-залы аэропортов по всему миру\n"
-            "• Расширенная страховка: путешествия, гаджеты, здоровье\n"
-            "• Повышенные лимиты и особые условия по кредитам\n\n"
-
-            "<b>💳 Обслуживание:</b>\n"
-            "• <b>1990 ₽/мес</b> или <b>бесплатно</b> при остатке от 300 000 ₽\n\n"
-
-            "<b>📋 Условия:</b>\n"
-            "• Новый клиент Т‑Банка\n"
-            "• Оформить карту и потратить <b>от 500 ₽ за 30 дней</b>\n\n"
-
-            "⏱️ Доставка — бесплатно по всей России.\n\n"
-            
-            "<i>🔒 Оформление происходит на официальном сайте банка.</i>\n"
-            "<i>Бот не запрашивает паспорт, коды из СМС и данные карты.</i>"
-        )
-    elif product_key == "alpha_debit":
-        return (
-            "<b>🏦 Альфа-Банк | Дебетовая карта</b>\n\n"
-            
-            "<b>📋 Условия активации:</b>\n"
-            "• Быть новым клиентом Альфа-Банка\n"
-            "• Оформить дебетовую карту\n"
-            "• Получить и активировать карту\n"
-            "• Совершить первую покупку (на любую сумму)\n\n"
-
-            "<b>🎁 Что вы получаете:</b>\n"
-            "• Кэшбэк, проценты на остаток, мили\n"
-            "• Бонус до 700 ₽ за оформление (по условиям партнёрской программы)\n\n"
-
-            "<b>⏱️ Сроки:</b>\n"
-            "• Бонус зачисляется в течение 3–14 дней после активации\n"
-            "• Выпуск и доставка — бесплатно"
-            
-            "<i>🔒 Оформление происходит на официальном сайте банка.</i>\n"
-            "<i>Бот не запрашивает паспорт, коды из СМС и данные карты.</i>"
-        )   
-
-    else:
-        return base + "<b>Условия уточняйте при оформлении.</b>"
-    
-def _get_detailed_conditions_text(product_key: str, product_name: str) -> str:
-    base = f"<b>📄 Подробные условия | {product_name}</b>\n\n"
-
-    if product_key == "black_classic":
-        return base + (
-            "<b>🎁 Преимущества Tinkoff Black:</b>\n"
-            "• <b>Кэшбэк до 30%</b> по спецпредложениям: маркетплейсы, одежда, косметика, электроника\n"
-            "• <b>До 15%</b> в 4 категориях на выбор каждый месяц (супермаркеты, транспорт, фастфуд, дом и ремонт и др.)\n"
-            "• <b>Бесплатные переводы</b>: до 1 млн ₽ за операцию и до 30 млн ₽ в месяц в другие банки\n"
-            "• <b>Снятие без комиссии</b>: до 500 000 ₽ в банкоматах Т‑Банка, до 100 000 ₽ в сторонних (при снятии от 3 000 ₽)\n"
-            "• <b>Допкарты</b> для близких — бесплатно\n"
-            "• <b>Удобное приложение</b>: ЖКХ, вклады, кино, заправки, инвестиции, страховки — всё в одном месте\n\n"
-
-            "<b>🎄 Новогодняя акция «Золотой Билет»:</b>\n"
-            "• Действует с 01.12.2025 по 24.12.2025\n"
-            "• Условие: первая покупка от 500 ₽ в течение 30 дней после получения карты\n"
-            "• Гарантированный кэшбэк на сладости\n"
-            "• Шанс выиграть до 5 000 000 ₽\n\n"
-
-            "<b>📋 Условия активации:</b>\n"
-            "• Быть новым клиентом Т‑Банка (без других действующих продуктов)\n"
-            "• Оформить карту\n"
-            "• Получить и активировать её\n"
-            "• Совершить первую покупку от 500 ₽ в течение 30 дней\n\n"
-
-            "<b>⏱️ Сроки:</b>\n"
-            "• Бонус начисляется в течение 10 рабочих дней\n"
-            "• Выпуск и доставка — бесплатно\n"
-            "• Доставка курьером в удобное место и время\n\n"
-
-            "<i>🔒 Все персональные данные вводятся исключительно на стороне банка.</i>\n"
-            "<i>📌 Условия акций, бонусов и начислений определяются банком и могут быть изменены без уведомления.</i>"
-            )
-        
-    elif product_key == "black_aroma":
-        return base + (
-            "<b>🌸 Аромакарта Black</b>\n\n"
-            "• Карта <b>пахнет шоколадом и кокосом</b> — идеально для лета!\n"
-            "• Все преимущества Tinkoff Black:\n"
-            "  – Кэшбэк до 30% по спецпредложениям\n"
-            "  – До 15% в 4 категориях на выбор\n"
-            "  – Бесплатные переводы до 1 млн ₽/операция\n"
-            "  – Снятие без комиссии: до 500 000 ₽ в Т‑Банке, до 100 000 ₽ в сторонних\n"
-            "  – Бесплатные допкарты для близких\n"
-            "  – Удобное приложение для всех трат: ЖКХ, вклады, доставка, кино, заправки\n\n"
-
-            "<b>📋 Условия активации:</b>\n"
-            "• Быть новым клиентом Т‑Банка\n"
-            "• Оформить карту\n"
-            "• Совершить первую покупку от 500 ₽ в течение 30 дней\n\n"
-
-            "<b>⏱️ Сроки:</b>\n"
-            "• Бонус — в течение 10 рабочих дней\n"
-            "• Доставка — в день заявки или на следующий день (при оформлении до 20:00)\n\n"
-
-            "<i>🔒 Все персональные данные вводятся исключительно на стороне банка.</i>\n"
-            "<i>📌 Условия акций, бонусов и начислений определяются банком и могут быть изменены без уведомления.</i>"
-            )
-
-    elif product_key == "black_youth":
-        return base + (
-            "<b>🎓 Молодёжная карта (14–25 лет)</b>\n\n"
-            "• <b>1% кэшбэка за все покупки</b> — даже без спецпредложений\n"
-            "• До 15% в 4 категориях на выбор каждый месяц\n"
-            "• До 30% по спецпредложениям партнёров\n"
-            "• Бесплатный выпуск и обслуживание\n"
-            "• Уникальный молодёжный дизайн\n\n"
-
-            "<b>📋 Условия активации:</b>\n"
-            "• Возраст: 14–25 лет\n"
-            "• Быть новым клиентом Т‑Банка\n"
-            "• Оформить карту\n"
-            "• Совершить первую покупку от 500 ₽ в течение 30 дней\n\n"
-
-            "<b>⏱️ Сроки:</b>\n"
-            "• Бонус — в течение 10 рабочих дней\n"
-            "• Карта выпускается и доставляется бесплатно\n\n"
-
-            "<i>🔒 Все персональные данные вводятся исключительно на стороне банка.</i>\n"
-            "<i>📌 Условия акций, бонусов и начислений определяются банком и могут быть изменены без уведомления.</i>"
-            )
-
-    elif product_key == "black_retro":
-        return base + (
-            "<b>📼 Ретро-карта (Black Ностальгия)</b>\n\n"
-            "• Ностальгический дизайн в стиле 2000-х — как у первой карты Тинькофф\n"
-            "• Выпуск:\n"
-            "  – <b>0 ₽</b>, если у вас нет других карт Т‑Банка\n"
-            "  – <b>600 ₽</b>, если у вас уже есть действующая карта\n"
-            "• Количество карт ограничено\n"
-            "• Доставка: при оформлении до 20:00 — в день заявки или на следующий день\n\n"
-
-            "<b>🎁 Преимущества:</b>\n"
-            "• Все плюсы Tinkoff Black: кэшбэк, переводы, снятие без комиссии, удобное приложение\n\n"
-
-            "<b>📋 Условия активации:</b>\n"
-            "• Быть новым клиентом Т‑Банка\n"
-            "• Оформить карту\n"
-            "• Совершить первую покупку от 500 ₽ в течение 30 дней\n\n"
-
-            "<b>⏱️ Сроки:</b>\n"
-            "• Бонус — в течение 10 рабочих дней\n\n"
-
-            "<i>🔒 Все персональные данные вводятся исключительно на стороне банка.</i>\n"
-            "<i>📌 Условия акций, бонусов и начислений определяются банком и могут быть изменены без уведомления.</i>"
-            )
-
-    elif product_key == "tbank_drive":
-        return base + (
-            "<b>🚗 Tinkoff Drive — всё для тех, кто за рулём</b>\n\n"
-            "• Кэшбэк на АЗС, парковки, автомойки, шиномонтаж, запчасти, ремонт\n"
-            "• До 30% кэшбэка по спецпредложениям партнёров\n"
-            "• Бесплатный выпуск и доставка\n"
-            "• Бесплатные переводы и снятие наличных без комиссии\n"
-            "• Удобное приложение: оплата парковок, топлива, страховки — всё в одном месте\n"
-            "• Участие в акциях «Всё за счёт банка»\n\n"
-
-            "<b>📋 Условия активации:</b>\n"
-            "• Быть новым клиентом Т‑Банка\n"
-            "• Использовать промокод <code>123GO</code>"
-            "• Оформить карту Drive\n"
-            "• Потратить от 5000 ₽ за 30 дней\n\n"
-
-            "<b>⏱️ Сроки:</b>\n"
-            "• Бонус — в течение 10 рабочих дней после покупки\n\n"
-
-            "<i>🔒 Все персональные данные вводятся исключительно на стороне банка.</i>\n"
-            "<i>📌 Условия акций, бонусов и начислений определяются банком и могут быть изменены без уведомления.</i>"
-            )
-
-    elif product_key == "tbank_mobile":
-        return base + (
-            "<b>📱 T-Mobile от Т‑Банка</b>\n\n"
-            "• Выгодные тарифы от 300 ₽/месяц\n"
-            "• Безлимитные звонки на номера T-Mobile\n"
-            "• Кэшбэк до 10% за оплату связи\n"
-            "• Управление тарифом в приложении Т‑Банка\n"
-            "• Роуминг по миру по цене домашнего региона\n\n"
-
-            "<b>📋 Условия активации:</b>\n"
-            "• Быть новым клиентом Т‑Банка\n"
-            "• Оформить сим-карту T-Mobile\n"
-            "• Пополнить баланс на 500 ₽ в течение 30 дней\n\n"
-
-            "<b>⏱️ Сроки:</b>\n"
-            "• Бонус — в течение 5–10 рабочих дней\n\n"
-
-            "<i>🔒 Все персональные данные вводятся исключительно на стороне банка.</i>\n"
-            "<i>📌 Условия акций, бонусов и начислений определяются банком и могут быть изменены без уведомления.</i>"
-            )
-    elif product_key == "alpha_debit":
-        return base + (
-            "<b>🏦 Альфа-Банк | Дебетовая карта</b>\n\n"
-            "• Кэшбэк, проценты на остаток, мили\n"
-            "• Бонус 500 ₽ за оформление (по условиям партнёрской программы)\n\n"
-
-            "<b>📋 Условия активации:</b>\n"
-            "• Оформить дебетовую карту Альфа-Банка\n"
-            "• Получить и активировать карту\n"
-            "• Совершить первую покупку (любая сумма)\n\n"
-
-            "<b>⏱️ Сроки:</b>\n"
-            "• Бонус зачисляется в течение 3–14 дней\n\n"
-
-            "<i>🔒 Все персональные данные вводятся исключительно на стороне банка.</i>\n"
-            "<i>📌 Условия акций, бонусов и начислений определяются банком и могут быть изменены без уведомления.</i>"
-            )
-    else:
-        return base + "<b>Подробные условия уточняются на сайте банка.</b>"

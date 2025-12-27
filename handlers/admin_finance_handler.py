@@ -1,21 +1,12 @@
 import json
 import logging
-from datetime import datetime
 from aiogram import Router, F, types
-from aiogram.types import BufferedInputFile, CallbackQuery
-from aiogram.fsm.context import FSMContext
+from aiogram.types import BufferedInputFile
 from config import settings
-from services.referrer_report_generator import generate_full_json_report
-from database.db_manager import (
-    get_admin_traffic_overview,
-    confirm_user_bonus,
-    reject_user_bonus,
-    approve_application,
-    get_application_by_id,
-    reject_application,
-)
+from datetime import datetime
+from db.finance import get_admin_traffic_overview
+from services.referrer_report_generator import build_referrer_json_report
 from utils.keyboards import get_admin_panel_kb
-from utils.states import AdminStates
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -23,8 +14,7 @@ logger = logging.getLogger(__name__)
 
 def is_admin(user_id: int) -> bool:
     return user_id in settings.ADMIN_IDS
-    
-    
+
 @router.callback_query(F.data == "admin_report")
 async def admin_full_report(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -34,7 +24,7 @@ async def admin_full_report(callback: types.CallbackQuery):
     await callback.answer("⏳ Формирую отчёт…")
 
     try:
-        json_data = await generate_full_json_report()
+        json_data = await build_referrer_json_report()
 
         if not json_data:
             await callback.message.answer("📭 Нет данных для отчёта.")
@@ -111,55 +101,22 @@ async def admin_traffic_dashboard(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("admin:app:approve:"))
-async def admin_approve_application(callback: CallbackQuery, state: FSMContext):
-
-    if callback.from_user.id not in settings.ADMIN_IDS:
-        await callback.answer("⛔ Доступ запрещён", show_alert=True)
-        return
-
-    app_id = int(callback.data.split(":")[-1])
-    app = await get_application_by_id(app_id)
-
-    if not app:
-        await callback.answer("Заявка не найдена", show_alert=True)
-        return
-
-    if app["status"] != "pending":
-        await callback.answer("Заявка уже обработана", show_alert=True)
-        return
-
-    await state.clear()
-    await state.set_state(AdminStates.waiting_bonus_amount)
-    await state.update_data(application_id=app_id)
-
-    await callback.message.answer(
-        f"💰 Введите сумму бонуса для пользователя <code>{app['user_id']}</code>:",
-        parse_mode="HTML"
-    )
-    await callback.answer()
+# ❗ временная заглушка
+OFFERS = [
+    {
+        "id": 1,
+        "product_name": "Black",
+        "title": "50% кэшбек в супермаркетах",
+        "conditions": "Кэшбек 50% на покупки в супермаркетах",
+        "is_active": True
+    },
+    {
+        "id": 2,
+        "product_name": "Black",
+        "title": "Золотой билет",
+        "conditions": "Бонус 500₽ после выполнения условий",
+        "is_active": False
+    }
+]
 
 
-@router.callback_query(F.data.startswith("admin:app:reject:"))
-async def admin_reject_application(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in settings.ADMIN_IDS:
-        await callback.answer("⛔ Доступ запрещён", show_alert=True)
-        return
-
-    app_id = int(callback.data.split(":")[-1])
-    app = await get_application_by_id(app_id)
-
-    if not app:
-        await callback.answer("Заявка не найдена", show_alert=True)
-        return
-
-    if app["status"] != "pending":
-        await callback.answer("Заявка уже обработана", show_alert=True)
-        return
-
-    await reject_application(app_id)
-
-    await state.clear()
-
-    await callback.message.edit_text("❌ Заявка отклонена")
-    await callback.answer()
