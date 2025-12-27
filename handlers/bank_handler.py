@@ -137,7 +137,7 @@ async def choose_variant(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserCatalogFSM.choosing_variant)
     kb = InlineKeyboardBuilder()
     for variant in variants:
-        kb.button(text=variant["name"], callback_data=f"user_variant:{variant['id']}")
+        kb.button(text=variant["title"], callback_data=f"user_variant:{variant['id']}")
 
     kb.button(text="Оформить продукт без варианта", callback_data=f"offer_apply:{product_key}|0")
     kb.adjust(1)
