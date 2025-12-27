@@ -118,16 +118,17 @@ async def bank_selected(message: types.Message, state: FSMContext):
 # -------------------- choose_variant --------------------
 @router.callback_query(UserCatalogFSM.choosing_product, F.data.startswith("user_product:"))
 async def choose_variant(callback: types.CallbackQuery, state: FSMContext):
-    product_key = callback.data.split(":", 1)[1]
     data = await state.get_data()
     bank_key = data.get("bank_key")
-
     if not bank_key:
-        raise RuntimeError("FSM missing bank_key before choose_variant")
+        await callback.message.answer("❌ Ошибка: банк не выбран. Вернитесь в меню.")
+        await callback.answer()
+        return
 
+    product_key = callback.data.split(":", 1)[1]
     await state.update_data(product_key=product_key)
-    variants = await get_variants(bank_key, product_key)
 
+    variants = await get_variants(bank_key, product_key)
     if not variants:
         await state.update_data(variant_key=None)
         await state.set_state(UserCatalogFSM.viewing_conditions)
@@ -137,16 +138,14 @@ async def choose_variant(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserCatalogFSM.choosing_variant)
     kb = InlineKeyboardBuilder()
     for variant in variants:
-        kb.button(text=variant["title"], callback_data=f"user_variant:{variant['id']}")
-
-    kb.button(text="Оформить продукт без варианта", callback_data=f"offer_apply:{product_key}|0")
+        kb.button(
+            text=variant.get("title", f"Вариант {variant['id']}"),
+            callback_data=f"user_variant:{variant['id']}"
+        )
+    kb.button(text="⬅️ Назад", callback_data="user:back_to_products")
     kb.adjust(1)
-
-    await callback.message.edit_text(
-        "🧩 <b>Выберите вариант или оформите продукт целиком:</b>",
-        reply_markup=kb.as_markup(),
-        parse_mode="HTML"
-    )
+    
+    await callback.message.edit_text("🧩 <b>Выберите вариант:</b>", reply_markup=kb.as_markup(), parse_mode="HTML")
     await callback.answer()
 
 
@@ -182,11 +181,8 @@ async def show_standard_conditions(callback: types.CallbackQuery, state: FSMCont
 @router.callback_query(UserCatalogFSM.choosing_variant, F.data.startswith("user_variant:"))
 async def show_conditions(callback: types.CallbackQuery, state: FSMContext):
     variant_key = callback.data.split(":", 1)[1]
-
-    data = await state.get_data()
-    product_key = data.get("product_key")
-
     offer = await get_offer_by_id(variant_key)
+
     if not offer:
         await show_standard_conditions(callback, state)
         return

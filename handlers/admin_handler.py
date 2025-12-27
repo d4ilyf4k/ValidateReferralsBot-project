@@ -198,11 +198,11 @@ async def update_link_input(message: types.Message, state: FSMContext):
     )
 
     if success:
-        target = f"{bank_key}/{product_key}" if not variant_key else f"{bank_key}/{product_key}/{variant_key}"
+        target = f"Продукт: {product_key}"
+        if variant_key:
+            target += f" / Вариант: {variant_key}"
         await message.answer(
-            f"✅ Ссылка успешно сохранена!\n\n"
-            f"Цель: {target}\n"
-            f"🔗 Оригинальная ссылка:\n{base_url}"
+            f"✅ Ссылка успешно сохранена!\nБанк: {bank_key}\n{target}\n\n🔗 Оригинальная ссылка:\n{base_url}"
         )
     else:
         await message.answer("❌ Ошибка при сохранении ссылки")
