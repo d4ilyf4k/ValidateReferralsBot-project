@@ -1,13 +1,10 @@
 import logging
-import pyshorteners
-import asyncio
 
+from aiogram.types import InlineKeyboardButton
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-
 from utils.keyboards import get_admin_panel_kb
-from utils.traffic_sources import TRAFFIC_SOURCES, DEFAULT_SOURCE
 from db.banks import get_active_banks
 from db.products import get_products_by_bank
 from db.variants import get_variants_by_product
@@ -93,19 +90,41 @@ async def select_bank(callback: types.CallbackQuery, state: FSMContext):
 
     builder = InlineKeyboardBuilder()
     for p in products:
-        builder.button(
-            text=p.get("product_name") or p.get("title") or str(p.get("product_key")),
-            callback_data=f"{UpdateLinkFSM.select_product}:{p.get('product_key')}"
-        )
-    builder.adjust(2)
-    kb = builder.as_markup()
+        product_key = p.get("product_key")
+        name = p.get("product_name") or p.get("title") or str(product_key)
+        # Кнопка для выбора продукта и вариантов
+        builder.row(InlineKeyboardButton(
+            text=f"{name} (Выбрать вариант)",
+            callback_data=f"{UpdateLinkFSM.select_product}:{product_key}"
+        ))
+        # Кнопка для обновления ссылки продукта без вариантов
+        builder.row(InlineKeyboardButton(
+            text=f"{name} (Обновить ссылку продукта)",
+            callback_data=f"{UpdateLinkFSM.input_link}_product:{product_key}"
+        ))
 
     await state.set_state(UpdateLinkFSM.select_product)
     await callback.message.answer(
-        "📌 Выберите продукт:",
-        reply_markup=kb
+        "📌 Выберите продукт или обновите ссылку продукта:",
+        reply_markup=builder.as_markup()
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith(UpdateLinkFSM.input_link + "_product:"))
+async def update_product_link(callback: types.CallbackQuery, state: FSMContext):
+    product_key = callback.data.split(":")[1]
+    await state.update_data(product_key=product_key)
+    await state.update_data(variant_key=None)  # ссылка для продукта, не для варианта
+    await state.set_state(UpdateLinkFSM.input_link)
+
+    await callback.message.answer(
+        "📌 Введите ссылку от банка для продукта (без UTM, они будут сгенерированы автоматически):\n"
+        "Пример:\n<code>https://example.com/offer</code>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
 
 # -----------------------------
 # Шаг 3: выбрать вариант

@@ -117,37 +117,77 @@ async def bank_selected(message: types.Message, state: FSMContext):
 
 # -------------------- choose_variant --------------------
 @router.callback_query(UserCatalogFSM.choosing_product, F.data.startswith("user_product:"))
-async def choose_variant(callback: types.CallbackQuery, state: FSMContext):
+async def choose_product(callback: types.CallbackQuery, state: FSMContext):
+    product_key = callback.data.split(":", 1)[1]
     data = await state.get_data()
     bank_key = data.get("bank_key")
     if not bank_key:
-        await callback.message.answer("❌ Ошибка: банк не выбран. Вернитесь в меню.")
-        await callback.answer()
+        raise RuntimeError("FSM missing bank_key before choose_product")
+
+    products = await get_products_by_bank(bank_key)
+    product = next((p for p in products if str(p["product_key"]) == product_key), None)
+    if not product:
+        await callback.answer("⚠️ Продукт не найден", show_alert=True)
         return
 
-    product_key = callback.data.split(":", 1)[1]
+    product_name = product.get("product_name") or product.get("title") or product_key
+
     await state.update_data(product_key=product_key)
 
     variants = await get_variants(bank_key, product_key)
-    if not variants:
-        await state.update_data(variant_key=None)
-        await state.set_state(UserCatalogFSM.viewing_conditions)
-        await show_standard_conditions(callback, state)
-        return
-
-    await state.set_state(UserCatalogFSM.choosing_variant)
     kb = InlineKeyboardBuilder()
-    for variant in variants:
+
+    kb.button(
+        text=f"✅ Оформить {product_name}",
+        callback_data=f"user_offer_apply:{product_key}|0"
+    )
+
+    if variants:
         kb.button(
-            text=variant.get("title", f"Вариант {variant['id']}"),
-            callback_data=f"user_variant:{variant['id']}"
+            text="📌 Показать текущие акции",
+            callback_data=f"user_product_variants:{product_key}"
         )
-    kb.button(text="⬅️ Назад", callback_data="user:back_to_products")
+
     kb.adjust(1)
-    
-    await callback.message.edit_text("🧩 <b>Выберите вариант:</b>", reply_markup=kb.as_markup(), parse_mode="HTML")
+    await state.set_state(UserCatalogFSM.viewing_conditions)
+
+    await callback.message.edit_text(
+        f"🛍 <b>Продукт:</b> {product_name}\nВыберите действие:",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML"
+    )
     await callback.answer()
 
+
+# -------------------- show_product_variants --------------------
+@router.callback_query(UserCatalogFSM.viewing_conditions, F.data.startswith("user_product_variants:"))
+async def show_product_variants(callback: types.CallbackQuery, state: FSMContext):
+    product_key = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    bank_key = data.get("bank_key")
+
+    variants = await get_variants(bank_key, product_key)
+    if not variants:
+        await callback.answer("⚠️ Акций нет", show_alert=True)
+        return
+
+    kb = InlineKeyboardBuilder()
+    for v in variants:
+        variant_name = v.get("title") or f"Акция {v.get('variant_key')}"
+        kb.button(
+            text=variant_name,
+            callback_data=f"user_variant:{v.get('variant_key')}"
+        )
+    kb.adjust(1)
+
+    await state.set_state(UserCatalogFSM.choosing_variant)
+
+    await callback.message.edit_text(
+        f"🧩 <b>Текущие акции продукта:</b>",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
 
 # -------------------- show_standard_conditions --------------------
