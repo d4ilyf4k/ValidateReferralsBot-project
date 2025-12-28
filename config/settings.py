@@ -16,7 +16,3 @@ if _admin_ids_raw:
         raise ValueError(f"Ошибка в ADMIN_IDS: {e}. Убедитесь, что там только числа, разделённые запятыми.")
 else:
     ADMIN_IDS = set()
-
-ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
-if not ENCRYPTION_KEY:
-    raise ValueError("ENCRYPTION_KEY обязателен в .env")

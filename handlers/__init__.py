@@ -14,6 +14,7 @@ from .admin_finance_handler import router as admin_finance_router
 from .admin_catalog_fsm import router as admin_catalog_fsm_router
 from .admin_product_fsm import router as admin_product_fsm_router
 from .admin_variant_handlers import router as admin_variant_router
+from .admin_conditions_fsm import router as admin_conditions_router
 from .admin_offer_fsm import router as admin_offer_fsm_router
 from .admin_back import router as admin_back_router
 
@@ -25,6 +26,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(admin_catalog_fsm_router)
     dp.include_router(admin_product_fsm_router)
     dp.include_router(admin_variant_router)
+    dp.include_router(admin_conditions_router)
     dp.include_router(admin_offer_fsm_router)
 
     # -------------------- USER FLOW --------------------

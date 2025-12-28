@@ -78,9 +78,14 @@ def get_admin_panel_kb():
         InlineKeyboardButton(text="📤 Полный отчёт (JSON)", callback_data="admin_report")],
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users"),
         InlineKeyboardButton(text="🧩 Управление каталогом", callback_data="admin:catalog")],
-        [InlineKeyboardButton(text="🔗 Обновить реф. ссылки", callback_data="admin_update_links")]
+        [InlineKeyboardButton(text="🔗 Обновить реф. ссылки", callback_data="admin_update_links"),
+        InlineKeyboardButton(text="📋 Управление условиями", callback_data="admin_conditions")]
     ])
 
+def get_admin_conditions_kb():
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(InlineKeyboardButton("Управление условиями", callback_data="admin_conditions"))
+    return kb
 
 # =========================
 # Главное меню продукта

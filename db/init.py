@@ -42,6 +42,16 @@ async def initialize_database():
         """)
 
         await db.execute("""
+        CREATE TABLE IF NOT EXISTS conditions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT NOT NULL,
+            type TEXT NOT NULL,
+            related_key INTEGER NOT NULL,
+            active TEXT DEFAULT 0
+        )
+        """)
+
+        await db.execute("""
         CREATE TABLE IF NOT EXISTS referral_links (
             bank_key TEXT NOT NULL,
             product_key TEXT NOT NULL,

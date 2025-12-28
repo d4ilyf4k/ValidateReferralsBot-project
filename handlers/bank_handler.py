@@ -4,13 +4,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from urllib.parse import urlparse, urlencode, urlunparse, parse_qs
+
 from utils.traffic_sources import DEFAULT_SOURCE
 from utils.keyboards import get_user_bank_kb, get_user_main_menu_kb
 from db.banks import get_active_banks
 from db.products import get_products_by_bank
 from db.variants import get_variants
-from db.offers import get_offer_by_id
 from db.referrals import get_referral_link, shorten_link
+from db.conditions import get_conditions
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -24,22 +25,14 @@ class UserCatalogFSM(StatesGroup):
 
 
 # -------------------- helpers --------------------
-def append_utm(url: str, query: dict) -> str:
-    if isinstance(url, bytes):
-        url = url.decode("utf-8")
-    parsed = urlparse(url)
-    query_str = {k: str(v) for k, v in query.items() if v is not None}
-    return urlunparse(parsed._replace(query=urlencode(query_str)))
-
-
 def build_kb(items: list[dict], callback_prefix: str, back: str | None = None) -> types.InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for item in items:
-        key = item.get('product_key')
+        key = item.get('product_key') or item.get('variant_key')
         if not key:
             continue
         kb.button(
-            text=item.get("title", str(key)),
+            text=item.get("product_name") or item.get("title") or str(key),
             callback_data=f"{callback_prefix}:{key}"
         )
     if back:
@@ -84,7 +77,6 @@ async def build_final_referral_url(
     )
 
     short_url = await shorten_link(final_url)
-
     return short_url
 
 
@@ -96,6 +88,7 @@ async def choose_bank(message: types.Message, state: FSMContext):
 
     kb = await get_user_bank_kb()
     await message.answer("🏦 Выберите банк:", reply_markup=kb)
+
 
 # -------------------- choose_product --------------------
 @router.message(UserCatalogFSM.choosing_bank, F.text.startswith("🏦"))
@@ -136,25 +129,27 @@ async def choose_product(callback: types.CallbackQuery, state: FSMContext):
         return
 
     product_name = product.get("product_name") or product.get("title") or product_key
-
     await state.update_data(product_key=product_key)
 
     variants = await get_variants(bank_key, product_key)
     kb = InlineKeyboardBuilder()
 
+    # Кнопка просмотра условий продукта вместо прямого оформления
     kb.button(
-        text=f"✅ Оформить {product_name}",
-        callback_data=f"offer_apply:{product_key}|0"
+        text=f"📋 Показать условия {product_name}",
+        callback_data=f"view_product_conditions:{product_key}"
     )
 
     if variants:
-        kb.button(
-            text="📌 Показать текущие акции",
-            callback_data=f"user_product_variants:{product_key}"
-        )
+        for v in variants:
+            kb.button(
+                text=f"📌 Вариант: {v['title']}",
+                callback_data=f"user_variant:{v['variant_key']}"
+            )
 
+    kb.button(text="⬅ Назад", callback_data="choose_bank")
     kb.adjust(1)
-    await state.set_state(UserCatalogFSM.viewing_conditions)
+    await state.set_state(UserCatalogFSM.choosing_variant)
 
     await callback.message.edit_text(
         f"🛍 <b>Продукт:</b> {product_name}\nВыберите действие:",
@@ -164,93 +159,74 @@ async def choose_product(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# -------------------- show_product_variants --------------------
-@router.callback_query(UserCatalogFSM.viewing_conditions, F.data.startswith("user_product_variants:"))
-async def show_product_variants(callback: types.CallbackQuery, state: FSMContext):
-    product_key = callback.data.split(":", 1)[1]
-    data = await state.get_data()
-    bank_key = data.get("bank_key")
-
-    if not bank_key:
-        await callback.answer("❌ Ошибка: банк не выбран.", show_alert=True)
-        return
-
-    variants = await get_variants(bank_key, product_key)
-    if not variants:
-        await callback.answer("⚠️ Нет доступных акций для этого продукта.", show_alert=True)
-        return
-
-    kb = InlineKeyboardBuilder()
-    for v in variants:
-        variant_name = v.get("title") or f"Акция {v.get('variant_key')}"
-        kb.button(
-            text=variant_name,
-            callback_data=f"offer_apply:{product_key}|{v.get('variant_key')}"
-        )
-
-    kb.button(text="⬅ Назад", callback_data=f"user_product_back:{product_key}")
-    kb.adjust(1)
-
-    await state.set_state(UserCatalogFSM.choosing_variant)
-    await state.update_data(product_key=product_key)
-
-    await callback.message.edit_text(
-        f"🧩 <b>Текущие акции продукта {product_key}:</b>",
-        reply_markup=kb.as_markup(),
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-# -------------------- show_standard_conditions --------------------
-async def show_standard_conditions(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    product_key = data.get("product_key")
-
-    if not product_key:
-        await callback.message.answer(
-            "❌ Ошибка: не выбран продукт. Вернитесь в меню.",
-            reply_markup=get_user_main_menu_kb()
-        )
-        await callback.answer()
-        return
-
-    kb = InlineKeyboardBuilder()
-    kb.button(text="❌ Отказаться", callback_data="offer_cancel")
-    kb.button(text="✅ Оформить", callback_data=f"offer_apply:{product_key}|0")
-    kb.adjust(1)
-
-    await callback.message.edit_text(
-        "📋 <b>Стандартные условия оформления</b>\n\n"
-        "После подтверждения вы получите ссылку для оформления.",
-        parse_mode="HTML",
-        reply_markup=kb.as_markup()
-    )
-    await callback.answer()
-
-
 # -------------------- show_conditions --------------------
 @router.callback_query(UserCatalogFSM.choosing_variant, F.data.startswith("user_variant:"))
 async def show_conditions(callback: types.CallbackQuery, state: FSMContext):
     variant_key = callback.data.split(":", 1)[1]
-    offer = await get_offer_by_id(variant_key)
+    data = await state.get_data()
+    product_key = data.get("product_key")
+    bank_key = data.get("bank_key")
 
-    if not offer:
-        await show_standard_conditions(callback, state)
+    if not product_key or not bank_key:
+        await callback.answer("❌ Ошибка: продукт или банк не выбран.", show_alert=True)
         return
 
-    await state.update_data(
-        product_key=str(offer["product_key"]),
-        variant_key=str(variant_key)
+    # Условия варианта
+    variant_conditions = await get_conditions("variant", variant_key)
+    variant_text = "\n".join(f"{i+1}️⃣ {c['text']}" for i, c in enumerate(variant_conditions)) \
+                   if variant_conditions else "Условия для варианта отсутствуют."
+
+    # Условия продукта
+    product_conditions = await get_conditions("product", product_key)
+    product_text = "\n".join(f"{i+1}️⃣ {c['text']}" for i, c in enumerate(product_conditions)) \
+                   if product_conditions else "Условия для продукта отсутствуют."
+
+    # Формируем текст с визуальным разделением
+    full_text = (
+        f"📌 <b>Общие условия продукта:</b>\n{product_text}\n\n"
+        f"📌 <b>Условия варианта:</b>\n{variant_text}"
+
     )
-    await state.set_state(UserCatalogFSM.viewing_conditions)
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="❌ Отказаться", callback_data="offer_cancel")
-    kb.button(text="✅ Оформить", callback_data=f"offer_apply:{offer['product_key']}|{variant_key}")
+    kb.button(text="❌ Отказаться", callback_data="cancel_offer")
+    kb.button(text="✅ Оформить", callback_data=f"apply_offer:{product_key}|{variant_key}")
+    kb.button(text="⬅ Назад", callback_data=f"user_product:{product_key}")
     kb.adjust(1)
 
     await callback.message.edit_text(
-        f"📋 <b>Условия:</b>\n\n{offer['offer_conditions']}",
+        full_text,
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML"
+    )
+    await state.update_data(variant_key=variant_key)
+    await state.set_state(UserCatalogFSM.viewing_conditions)
+    await callback.answer()
+
+
+# -------------------- view_product_conditions --------------------
+@router.callback_query(UserCatalogFSM.choosing_variant, F.data.startswith("view_product_conditions:"))
+async def view_product_conditions(callback: types.CallbackQuery, state: FSMContext):
+    product_key = callback.data.split(":", 1)[1]
+    product_conditions = await get_conditions("product", product_key)
+    product_text = "\n".join(f"{i+1}️⃣ {c['text']}" for i, c in enumerate(product_conditions)) \
+                   if product_conditions else "Условия отсутствуют."
+
+    data = await state.get_data()
+    variant_key = data.get("variant_key")
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="❌ Отказаться", callback_data="cancel_offer")
+    if variant_key:
+        kb.button(text="✅ Оформить", callback_data=f"apply_offer:{product_key}|{variant_key}")
+    else:
+        kb.button(text="✅ Оформить", callback_data=f"apply_offer:{product_key}|0")
+                
+    kb.button(text="⬅ Назад", callback_data=f"user_variant:{variant_key}" if variant_key else f"user_product:{product_key}")
+    kb.adjust(1)
+
+    await callback.message.edit_text(
+        f"📋 <b>Общие условия продукта:</b>\n\n{product_text}",
         reply_markup=kb.as_markup(),
         parse_mode="HTML"
     )
@@ -258,21 +234,16 @@ async def show_conditions(callback: types.CallbackQuery, state: FSMContext):
 
 
 # -------------------- apply_offer --------------------
-@router.callback_query(F.data.startswith(("offer_apply:", "user_product_variants:")))
+@router.callback_query(F.data.startswith("apply_offer:"))
 async def apply_offer(callback: types.CallbackQuery, state: FSMContext):
     try:
         data = await state.get_data()
         bank_key = data.get("bank_key")
         traffic_source = data.get("traffic_source", DEFAULT_SOURCE)
 
-        if callback.data.startswith("offer_apply:"):
-            payload = callback.data.split(":", 1)[1]
-            product_key, variant_key = payload.split("|") if "|" in payload else (payload, None)
-            if variant_key == "0":
-                variant_key = None
-
-        elif callback.data.startswith("user_product_variants:"):
-            product_key = callback.data.split(":", 1)[1]
+        payload = callback.data.split(":", 1)[1]
+        product_key, variant_key = payload.split("|") if "|" in payload else (payload, None)
+        if variant_key == "0":
             variant_key = None
 
         final_url = await build_final_referral_url(
@@ -304,9 +275,8 @@ async def apply_offer(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
 
 
-
 # -------------------- cancel_offer --------------------
-@router.callback_query(F.data == "offer_cancel")
+@router.callback_query(F.data == "cancel_offer")
 async def cancel_offer(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.answer("❌ Действие отменено", reply_markup=get_user_main_menu_kb())

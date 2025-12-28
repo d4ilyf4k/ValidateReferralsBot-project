@@ -6,7 +6,6 @@ from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import add_back_button
 from db.base import get_db_connection
-from aiogram.filters import StateFilter
 
 router = Router()
 logging.basicConfig(level=logging.INFO)

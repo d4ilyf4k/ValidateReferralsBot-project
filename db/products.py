@@ -57,7 +57,7 @@ async def get_products_by_bank(bank_key: str) -> list[dict]:
     async with get_db_connection() as db:
         async with db.execute(
             """
-            SELECT product_key, product_name AS title, is_active
+            SELECT id, bank_key, product_key, product_name AS title, is_active
             FROM products
             WHERE bank_key = ?
             """,
