@@ -1,121 +1,121 @@
 import json
 from datetime import datetime, timedelta
-
+from zoneinfo import ZoneInfo  # Python 3.9+
 from db.base import get_db_connection
 
-# ==================================
-# Weekly analytics (NEW ARCHITECTURE)
-# Source of truth: applications
-# ==================================
-
+TOP_PRODUCTS = 8  # максимум отображаемых продуктов в PDF
+MSK = ZoneInfo("Europe/Moscow")
 
 def get_last_week_period():
-    """
-    Returns last full calendar week (Mon–Sun).
-    """
-    today = datetime.utcnow().date()
+    """Возвращает последний полный календарный неделю (Mon–Sun)."""
+    today = datetime.now(MSK).date()
     last_monday = today - timedelta(days=today.weekday() + 7)
     last_sunday = last_monday + timedelta(days=6)
     return last_monday, last_sunday
 
-
 async def generate_weekly_snapshot() -> str:
-    """
-    Weekly JSON snapshot for admin / analytics.
-    Uses applications as the only source of truth.
-    """
+    """Генерирует snapshot для weekly PDF (immutable contract) с местным временем МСК."""
     start_date, end_date = get_last_week_period()
 
     async with get_db_connection() as db:
-        # --- summary ---
-        summary_query = """
+        # ===== SUMMARY =====
+        cur = await db.execute("""
             SELECT
                 COUNT(*) AS applications,
-                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
-                SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
-                COALESCE(SUM(CASE WHEN status = 'approved' THEN gross_bonus END), 0) AS gross_income
+                COUNT(DISTINCT user_id) AS users
             FROM applications
             WHERE DATE(created_at) BETWEEN ? AND ?
-        """
-
-        cur = await db.execute(summary_query, (start_date, end_date))
+        """, (start_date, end_date))
         row = await cur.fetchone()
+        total_apps = row["applications"] or 0
+        total_users = row["users"] or 0
 
         summary = {
-            "applications": row["applications"] or 0,
-            "approved": row["approved"] or 0,
-            "pending": row["pending"] or 0,
-            "rejected": row["rejected"] or 0,
-            "gross_income": row["gross_income"] or 0,
+            "applications": total_apps,
+            "users": total_users
         }
 
-        # --- by bank ---
-        by_bank_query = """
+        # ===== PRODUCTS =====
+        cur = await db.execute("""
+            SELECT
+                product_key,
+                variant_key,
+                COUNT(*) AS applications
+            FROM applications
+            WHERE DATE(created_at) BETWEEN ? AND ?
+            GROUP BY product_key, variant_key
+            ORDER BY applications DESC
+        """, (start_date, end_date))
+        products_raw = [dict(r) for r in await cur.fetchall()]
+
+        # Post-processing: Top N + Others + label + percent
+        top_products = products_raw[:TOP_PRODUCTS]
+        others_apps = sum(r["applications"] for r in products_raw[TOP_PRODUCTS:])
+
+        products = []
+        for r in top_products:
+            label = r["product_key"]
+            if r.get("variant_key"):
+                label = f"{label} / {r['variant_key']}"
+            percent = round(r["applications"] / total_apps * 100, 1) if total_apps else 0
+            products.append({
+                "product_key": r["product_key"],
+                "variant_key": r.get("variant_key"),
+                "label": label,
+                "applications": r["applications"],
+                "percent": percent
+            })
+
+        if others_apps > 0:
+            products.append({
+                "product_key": "others",
+                "variant_key": None,
+                "label": "Others",
+                "applications": others_apps,
+                "percent": round(others_apps / total_apps * 100, 1)
+            })
+
+        # ===== TRAFFIC =====
+        cur = await db.execute("""
+            SELECT
+                COALESCE(u.traffic_source, 'unknown') AS traffic_source,
+                COUNT(DISTINCT a.user_id) AS users,
+                COUNT(*) AS applications
+            FROM applications a
+            LEFT JOIN users u ON u.user_id = a.user_id
+            WHERE DATE(a.created_at) BETWEEN ? AND ?
+            GROUP BY traffic_source
+            ORDER BY users DESC
+        """, (start_date, end_date))
+        traffic = [dict(r) for r in await cur.fetchall()]
+
+        # ===== BANKS =====
+        cur = await db.execute("""
             SELECT
                 bank_key,
                 COUNT(*) AS applications,
-                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
-                SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
-                COALESCE(SUM(CASE WHEN status = 'approved' THEN gross_bonus END), 0) AS gross_income
+                COUNT(DISTINCT user_id) AS users,
+                COUNT(DISTINCT product_key || ':' || COALESCE(variant_key, '')) AS products
             FROM applications
             WHERE DATE(created_at) BETWEEN ? AND ?
             GROUP BY bank_key
             ORDER BY applications DESC
-        """
+        """, (start_date, end_date))
+        banks = [dict(r) for r in await cur.fetchall()]
 
-        cur = await db.execute(by_bank_query, (start_date, end_date))
-        rows = await cur.fetchall()
-
-        by_bank = []
-        for r in rows:
-            by_bank.append({
-                "bank": r["bank_key"],
-                "applications": r["applications"] or 0,
-                "approved": r["approved"] or 0,
-                "pending": r["pending"] or 0,
-                "rejected": r["rejected"] or 0,
-                "gross_income": r["gross_income"] or 0,
-            })
-
-    result = {
-        "period": f"{start_date:%d.%m.%Y} — {end_date:%d.%m.%Y}",
-        "generated_at": datetime.utcnow().isoformat(),
+    # ===== Snapshot with MSK time +03:00 =====
+    now_msk = datetime.now(MSK)
+    snapshot = {
+        "meta": {
+            "period_start": f"{start_date:%Y-%m-%d}",
+            "period_end": f"{end_date:%Y-%m-%d}",
+            "generated_at": now_msk.isoformat(timespec="seconds"),  # будет с +03:00
+            "week_id": f"{start_date.isocalendar()[0]}-W{start_date.isocalendar()[1]}"
+        },
         "summary": summary,
-        "by_bank": by_bank
+        "products": products,
+        "traffic": traffic,
+        "banks": banks
     }
 
-    return json.dumps(result, ensure_ascii=False, indent=2)
-
-
-# ==================================
-# Helpers for dashboards / jobs
-# ==================================
-
-
-async def get_weekly_applications_stats(days: int = 7):
-    """
-    Rolling weekly stats (last N days).
-    Useful for dashboards.
-    """
-    since = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
-
-    async with get_db_connection() as db:
-        query = """
-            SELECT
-                bank_key,
-                COUNT(*) AS applications,
-                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
-                SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
-                COALESCE(SUM(CASE WHEN status = 'approved' THEN gross_bonus END), 0) AS gross_income
-            FROM applications
-            WHERE DATE(created_at) >= ?
-            GROUP BY bank_key
-            ORDER BY applications DESC
-        """
-
-        cur = await db.execute(query, (since,))
-        rows = await cur.fetchall()
-        return [dict(r) for r in rows]
+    return json.dumps(snapshot, ensure_ascii=False, indent=2)

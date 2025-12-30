@@ -2,7 +2,6 @@ from .base import *
 from .users import *
 from .banks import *
 from .products import *
-from .offers import *
 from .variants import *
 from .finance import *
 from .referrals import *

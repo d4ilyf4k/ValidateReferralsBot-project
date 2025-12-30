@@ -43,10 +43,8 @@ async def db_health_check():
     required_tables = {
         "users",
         "referral_progress",
-        "financial_data",
         "referral_links",
         "products",
-        "offers",
         "applications",
         "banks",
         "variants",

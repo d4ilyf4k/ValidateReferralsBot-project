@@ -14,7 +14,7 @@ async def initialize_database():
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """)
-
+            #future-ready
         await db.execute("""
         CREATE TABLE IF NOT EXISTS referral_progress (
             user_id INTEGER PRIMARY KEY,
@@ -22,21 +22,6 @@ async def initialize_database():
             card_activated INTEGER DEFAULT 0,
             card_received_date DATETIME,
             card_activated_date DATETIME,
-            purchase_made INTEGER DEFAULT 0,
-            first_purchase_date DATETIME,
-            first_purchase_amount REAL,
-            FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
-        )
-        """)
-
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS financial_data (
-            user_id INTEGER PRIMARY KEY,
-            total_referral_bonus INTEGER DEFAULT 0,
-            total_tax INTEGER DEFAULT 0,
-            total_referrer_bonus INTEGER DEFAULT 0,
-            bonus_details TEXT,
-            updated_at DATETIME,
             FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
         )
         """)
@@ -92,36 +77,16 @@ async def initialize_database():
             UNIQUE (bank_key, product_key, variant_key)
         )
         """)
-
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS offers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            bank_key TEXT NOT NULL,
-            parent_type TEXT NOT NULL CHECK (parent_type IN ('product', 'variant')),
-            parent_key  TEXT NOT NULL,
-            offer_title TEXT NOT NULL,
-            offer_conditions TEXT NOT NULL,
-            gross_bonus INTEGER NOT NULL,
-            referral_link TEXT,
-            is_active INTEGER DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE (bank_key, parent_type, parent_key, offer_title)
-        )
-        """)
-
+            #future-ready
         await db.execute("""
         CREATE TABLE IF NOT EXISTS applications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            offer_id INTEGER NOT NULL,
             bank_key TEXT NOT NULL,
             product_key TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            gross_bonus INTEGER NOT NULL,
+            variant_key TEXT DEFAULT '',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (offer_id) REFERENCES offers(id)
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """)
 
@@ -136,7 +101,6 @@ async def initialize_database():
         """)
 
         await db.execute("CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at)")
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id)")
 
         await db.commit()

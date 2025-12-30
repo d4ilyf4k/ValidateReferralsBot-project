@@ -51,11 +51,6 @@ async def admin_product_open(callback: types.CallbackQuery, state: FSMContext):
     status = "🟢 Включен" if product.get("is_active", False) else "🔴 Выключен"
     kb.button(text=f"{status} 🔄", callback_data=f"admin_product:toggle:{product_key}")
 
-    # Добавить оффер продукта
-    kb.button(
-        text="➕ Добавить оффер продукта",
-        callback_data=f"admin_offer:open:product:{product_key}"
-    )
 
     # Список вариантов
     for v in variants:

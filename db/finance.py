@@ -1,216 +1,127 @@
 from typing import List, Dict
 from .base import get_db_connection
 
-
 # =========================
 # ADMIN FINANCE — SUMMARY
 # =========================
 
 async def get_admin_finance_summary(days: int = 30) -> Dict:
+    """
+    Возвращает сводку по пользователям и количеству заявок.
+    Доход и статусы не учитываются.
+    """
     async with get_db_connection() as db:
-        cur = await db.execute(
-            """
-            SELECT
-                COUNT(DISTINCT up.user_id)                         AS total_users,
-                COUNT(up.id)                                       AS total_confirmed,
-                COALESCE(SUM(o.gross_bonus), 0)                    AS total_bonus
-            FROM user_products up
-            JOIN offers o ON o.id = up.offer_id
-            WHERE up.status = 'approved'
-              AND up.offer_id IS NOT NULL
-              AND up.confirmed_at >= date('now', ?)
-            """,
-            (f"-{days} days",)
-        )
+        cur = await db.execute("SELECT COUNT(DISTINCT user_id) AS total_users FROM users")
         row = await cur.fetchone()
-
         return {
-            "total_users": row["total_users"],
-            "total_confirmed": row["total_confirmed"],
-            "total_bonus": row["total_bonus"],
+            "total_users": row["total_users"] if row else 0,
+            "total_confirmed": 0,
+            "total_bonus": 0,
         }
-
 
 # =========================
 # FINANCE DETAILS
 # =========================
 
-async def get_admin_finance_details(days: int = 30) -> List[Dict]:
+async def get_admin_finance_details() -> List[Dict]:
+    """
+    Детальный список заявок из таблицы applications
+    без статусов и доходов.
+    """
     async with get_db_connection() as db:
-        cur = await db.execute(
-            """
-            SELECT
-                up.id                      AS record_id,
-                up.user_id,
-                up.bank_key,
-                up.product_key,
-                p.product_name,
-                o.offer_title,
-                o.gross_bonus,
-                up.confirmed_at
-            FROM user_products up
-            JOIN offers o   ON o.id = up.offer_id
-            JOIN products p ON p.bank_key = up.bank_key AND p.product_key = up.product_key
-            WHERE up.status = 'approved'
-              AND up.offer_id IS NOT NULL
-              AND up.confirmed_at >= date('now', ?)
-            ORDER BY up.confirmed_at DESC
-            """,
-            (f"-{days} days",)
-        )
-        rows = await cur.fetchall()
-        return [dict(row) for row in rows]
-
-
-# =========================
-# FINANCE BY PRODUCT
-# =========================
-
-async def get_admin_finance_by_product(days: int = 30) -> List[Dict]:
-    async with get_db_connection() as db:
-        cur = await db.execute(
-            """
-            SELECT
-                up.bank_key,
-                up.product_key,
-                p.product_name,
-                COUNT(up.id)                    AS confirmed_count,
-                COALESCE(SUM(o.gross_bonus), 0) AS total_bonus
-            FROM user_products up
-            JOIN offers o   ON o.id = up.offer_id
-            JOIN products p ON p.bank_key = up.bank_key AND p.product_key = up.product_key
-            WHERE up.status = 'approved'
-              AND up.offer_id IS NOT NULL
-              AND up.confirmed_at >= date('now', ?)
-            GROUP BY up.bank_key, up.product_key
-            ORDER BY total_bonus DESC
-            """,
-            (f"-{days} days",)
-        )
-        rows = await cur.fetchall()
-        return [dict(row) for row in rows]
-
+        async with db.execute("""
+            SELECT id, user_id, bank_key, product_key, variant_key, created_at
+            FROM applications
+            ORDER BY created_at DESC
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 # =========================
 # TRAFFIC OVERVIEW
 # =========================
 
-async def get_admin_traffic_overview(days: int = 30) -> List[Dict]:
+async def get_admin_traffic_overview() -> List[Dict]:
+    """
+    Подсчёт пользователей и уникальных продуктов по источникам трафика.
+    Учитывает variant_key.
+    """
     async with get_db_connection() as db:
-        cur = await db.execute(
-            """
-            SELECT
-                COALESCE(rp.traffic_source, 'unknown') AS traffic_source,
-                COUNT(DISTINCT u.user_id)              AS total_users,
-                COUNT(up.id)                            AS confirmed_count,
-                COALESCE(SUM(o.gross_bonus), 0)         AS total_bonus
-            FROM users u
-            LEFT JOIN referral_progress rp ON rp.user_id = u.user_id
-            LEFT JOIN user_products up
-                   ON up.user_id = u.user_id
-                  AND up.status = 'approved'
-                  AND up.offer_id IS NOT NULL
-                  AND up.confirmed_at >= date('now', ?)
-            LEFT JOIN offers o ON o.id = up.offer_id
+        async with db.execute("""
+            SELECT traffic_source, COUNT(DISTINCT user_id) AS users
+            FROM users
             GROUP BY traffic_source
-            ORDER BY total_bonus DESC
-            """,
-            (f"-{days} days",)
-        )
-        rows = await cur.fetchall()
-        return [dict(row) for row in rows]
+        """) as cursor:
+            users_data = await cursor.fetchall()
 
+        async with db.execute("""
+            SELECT a.user_id, a.product_key, a.variant_key, u.traffic_source
+            FROM applications a
+            LEFT JOIN users u ON a.user_id = u.user_id
+        """) as cursor:
+            apps_data = await cursor.fetchall()
+
+    overview = {}
+    for row in users_data:
+        overview[row["traffic_source"]] = {"users": row["users"], "products_selected": 0}
+
+    products_by_source = {}
+    for app in apps_data:
+        source = app["traffic_source"] or "unknown"
+        key = (app["product_key"], app["variant_key"])
+        products_by_source.setdefault(source, set()).add(key)
+
+    for source, products in products_by_source.items():
+        if source in overview:
+            overview[source]["products_selected"] = len(products)
+        else:
+            overview[source] = {"users": 0, "products_selected": len(products)}
+
+    return [{"traffic_source": k, **v} for k, v in overview.items()]
 
 # =========================
 # TRAFFIC PROJECTION
 # =========================
 
-async def get_admin_traffic_finance_projection(days: int = 30) -> Dict:
+async def get_admin_traffic_finance_projection() -> Dict:
+    """
+    Подсчёт общего количества пользователей.
+    Доходы больше не учитываются.
+    """
     async with get_db_connection() as db:
-        cur = await db.execute(
-            """
-            SELECT
-                COUNT(DISTINCT u.user_id)      AS total_users,
-                COUNT(up.id)                    AS confirmed_count,
-                COALESCE(SUM(o.gross_bonus), 0) AS total_bonus
-            FROM users u
-            LEFT JOIN user_products up
-                   ON up.user_id = u.user_id
-                  AND up.status = 'approved'
-                  AND up.offer_id IS NOT NULL
-                  AND up.confirmed_at >= date('now', ?)
-            LEFT JOIN offers o ON o.id = up.offer_id
-            """,
-            (f"-{days} days",)
-        )
+        cur = await db.execute("SELECT COUNT(DISTINCT user_id) AS total_users FROM users")
         row = await cur.fetchone()
-
-        total_users = row["total_users"] or 0
-        total_bonus = row["total_bonus"] or 0
-
-        avg_per_user = (
-            round(total_bonus / total_users, 2)
-            if total_users > 0 else 0
-        )
-
-        return {
-            "total_users": total_users,
-            "total_bonus": total_bonus,
-            "avg_bonus_per_user": avg_per_user,
-        }
-
+        total_users = row["total_users"] if row else 0
+        return {"total_users": total_users}
 
 # =========================
-# WEEKLY AGGREGATION
+# USER-SPECIFIC FINANCE
 # =========================
 
-async def get_weekly_traffic_aggregation(weeks: int = 8) -> List[Dict]:
-    async with get_db_connection() as db:
-        cur = await db.execute(
-            """
-            SELECT
-                strftime('%Y-%W', up.confirmed_at) AS week,
-                COUNT(up.id)                       AS confirmed_count,
-                COALESCE(SUM(o.gross_bonus), 0)    AS total_bonus
-            FROM user_products up
-            JOIN offers o ON o.id = up.offer_id
-            WHERE up.status = 'approved'
-              AND up.offer_id IS NOT NULL
-              AND up.confirmed_at >= date('now', ?)
-            GROUP BY week
-            ORDER BY week ASC
-            """,
-            (f"-{weeks * 7} days",)
-        )
-        rows = await cur.fetchall()
-        return [dict(row) for row in rows]
-    
-async def get_user_finance_summary(user_id: int):
-    async with get_db_connection() as db:
-        async with db.execute( """
-            SELECT
-                COALESCE(SUM(CASE WHEN status = 'approved' THEN gross_bonus END), 0) AS approved_sum,
-                COALESCE(SUM(CASE WHEN status = 'pending' THEN gross_bonus END), 0) AS pending_sum
-            FROM applications
-            WHERE user_id = ?
-        """) as cursor:
-            row = await cursor.fetchone()
-            return dict(row) if row else None
-
-
-async def get_user_applications(user_id: int):
+async def get_user_applications(user_id: int) -> List[Dict]:
+    """
+    Список всех заявок пользователя.
+    """
     async with get_db_connection() as db:
         async with db.execute("""
-            SELECT
-                id,
-                bank_key,
-                product_key,
-                gross_bonus,
-                status,
-                created_at
+            SELECT id, bank_key, product_key, variant_key, created_at
             FROM applications
             WHERE user_id = ?
             ORDER BY created_at DESC
-        """) as cursor:
+        """, (user_id,)) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+async def get_user_finance_summary(user_id: int) -> Dict:
+    """
+    Сводка по заявкам пользователя.
+    Доходы и статусы не учитываются.
+    """
+    apps = await get_user_applications(user_id)
+    return {
+        "approved_sum": 0,
+        "pending_sum": 0,
+        "total_applications": len(apps)
+    }
+
+

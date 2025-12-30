@@ -8,16 +8,6 @@ router = Router()
 @router.callback_query(F.data == "admin:back")
 async def admin_back(call: types.CallbackQuery, state: FSMContext):
     current_state = await state.get_state()
-
-    if current_state and current_state.startswith("OfferFSM"):
-        await state.clear()
-        await call.message.edit_text(
-            "🔐 Админ-панель",
-            reply_markup=add_back_button(get_admin_panel_kb())
-        )
-        await call.answer()
-        return
-
     data = await state.get_data()
     route = BACK_ROUTES.get(current_state)
 

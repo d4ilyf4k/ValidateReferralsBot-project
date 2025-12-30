@@ -10,44 +10,9 @@ from utils.keyboards import (
     get_start_kb,
     get_user_main_menu_kb
 )
-from utils.states import BankAgreement
 
 router = Router()
 logger = logging.getLogger(__name__)
-
-# =========================
-# 🏦 ДОБАВИТЬ БАНК / ПРОДУКТ
-# =========================
-@router.message(F.text == "🏦 Добавить банк")
-async def add_bank_entry(message: types.Message, state: FSMContext):
-    logger.info(
-        "User %s entered add bank flow",
-        message.from_user.id
-    )
-    
-    await state.set_state(BankAgreement.choosing_bank)
-    await message.answer(
-        "Выберите банк или продукт:",
-        reply_markup=ReplyKeyboardRemove
-    )
-
-
-# =========================
-# ↩️ НАЗАД В МЕНЮ
-# =========================
-@router.message(F.text == "↩️ Назад в меню")
-async def back_to_menu(message: types.Message, state: FSMContext):
-    logger.info(
-        "User %s returned to main menu, FSM cleared",
-        message.from_user.id
-    )
-        
-    await state.clear()
-    await message.answer(
-        "Главное меню:",
-        reply_markup=get_user_main_menu_kb()
-    )
-
 
 # =========================
 # 🗑 УДАЛЕНИЕ ДАННЫХ
@@ -120,5 +85,17 @@ async def start_over_callback(callback: types.CallbackQuery, state: FSMContext):
         "Для начала работы нажмите кнопку ниже 👇",
         parse_mode="HTML",
         reply_markup=get_start_kb()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "cancel_edit")
+async def cancel_edit_profile(callback: types.CallbackQuery, state: FSMContext):
+    # Сбрасываем состояние FSM
+    await state.clear()
+
+    # Отправляем пользователя в главное меню
+    await callback.message.answer(
+        "Вы вернулись в главное меню:",
+        reply_markup=get_user_main_menu_kb()
     )
     await callback.answer()

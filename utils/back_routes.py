@@ -1,9 +1,7 @@
 from handlers.admin_catalog_fsm import AdminCatalogFSM, admin_catalog_entry, get_admin_product_kb, get_admin_bank_kb
 from handlers.admin_variant_handlers import AdminVariantFSM
-from handlers.admin_offer_fsm import OfferFSM
-from utils.keyboards import variants_keyboard, get_admin_offers_list_kb, variant_view_keyboard
+from utils.keyboards import variant_view_keyboard
 from db.variants import get_all_variants, get_variant
-from db.offers import get_offer_by_id
 
 BACK_ROUTES = {}
 
@@ -20,7 +18,6 @@ async def variant_view_keyboard_from_state(data):
     if not variant:
         return None
 
-    data.setdefault("title", variant.get("title"))
     return variant_view_keyboard(variant)
 
 
@@ -66,9 +63,8 @@ BACK_ROUTES.update({
 })
 
 # -------------------- Variant FSM --------------------
-async def variant_list_keyboard(data):
-    variants = await get_all_variants(data["bank_key"], data["product_key"])
-    return variants_keyboard(variants)
+async def variant_list_keyboard_placeholder(data):
+    return None
 
 BACK_ROUTES.update({
     AdminVariantFSM.view_variants: {
@@ -77,15 +73,10 @@ BACK_ROUTES.update({
         "keyboard": lambda data: get_admin_product_kb(data["bank_key"]),
         "parse_mode": "HTML",
     },
-    AdminVariantFSM.view_variant: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
-    },
     AdminVariantFSM.add_title: {
         "state": AdminVariantFSM.view_variants,
         "text": "📄 Варианты продукта <b>{product_key}</b>",
-        "keyboard": variant_list_keyboard,
+        "keyboard": variant_list_keyboard_placeholder,
         "parse_mode": "HTML",
     },
     AdminVariantFSM.edit_title: {
@@ -109,72 +100,7 @@ BACK_ROUTES.update({
     AdminVariantFSM.confirm_add: {
         "state": AdminVariantFSM.view_variants,
         "text": "📄 Варианты продукта <b>{product_key}</b>",
-        "keyboard": variant_list_keyboard,
+        "keyboard": variant_list_keyboard_placeholder,
         "parse_mode": "HTML",
-    },
-})
-
-# -------------------- Offer FSM --------------------
-async def offer_list_keyboard(data):
-    variant_key = data.get("variant_key")
-    offer = await get_offer_by_id(variant_key)
-    offers = [offer] if offer else []
-    return get_admin_offers_list_kb(offers)
-
-BACK_ROUTES.update({
-    OfferFSM.view_offers: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
-    },
-    OfferFSM.view_offer: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
-    },
-    OfferFSM.add_title: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
-    },
-    OfferFSM.add_conditions: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
-    },
-    OfferFSM.add_bonus: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
-    },
-    OfferFSM.confirm_add: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
-    },
-    OfferFSM.edit_title: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
-    },
-    OfferFSM.edit_conditions: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
-    },
-    OfferFSM.edit_bonus: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
-    },
-    OfferFSM.confirm_edit: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
-    },
-    OfferFSM.confirm_delete: {
-        "state": None,
-        "text": None,
-        "keyboard": lambda data: {"redirect": f"admin_product:open:{data['product_key']}"},
     },
 })

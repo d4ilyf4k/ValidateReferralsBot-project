@@ -32,11 +32,6 @@ async def create_user(user_id: int, full_name: str, source: Optional[str]) -> bo
                 "INSERT OR IGNORE INTO referral_progress (user_id) VALUES (?)",
                 (user_id,)
             )
-            await db.execute(
-                "INSERT OR IGNORE INTO financial_data (user_id) VALUES (?)",
-                (user_id,)
-            )
-
             await db.commit()
             return True
 
@@ -89,12 +84,6 @@ async def anonymize_user(user_id: int) -> bool:
                 WHERE user_id = ?
             """, (user_id,))
 
-            await db.execute("""
-                UPDATE financial_data
-                SET bonus_details = NULL
-                WHERE user_id = ?
-            """, (user_id,))
-
             await db.commit()
             return True
 
@@ -102,31 +91,22 @@ async def anonymize_user(user_id: int) -> bool:
             logger.exception(f"❌ anonymize_user error: {e}")
             return False
 
-
-async def get_user_full_data(user_id: int) -> dict | None:
+async def get_user_full_data(user_id: int):
     async with get_db_connection() as db:
         cur = await db.execute("""
             SELECT
-                u.user_id,
-                u.username,
-                u.first_name,
-
-                COUNT(a.id) AS applications_total,
-                SUM(CASE WHEN a.status = 'pending' THEN 1 ELSE 0 END) AS applications_pending,
-                SUM(CASE WHEN a.status = 'approved' THEN 1 ELSE 0 END) AS applications_approved,
-
-                COALESCE(SUM(a.gross_bonus), 0) AS total_gross_bonus,
-                COALESCE(SUM(CASE WHEN a.status = 'approved' THEN a.gross_bonus ELSE 0 END), 0)
-                    AS approved_gross_bonus,
-
-                MAX(a.created_at) AS last_application_at
-
-            FROM users u
-            LEFT JOIN applications a
-                ON a.user_id = u.user_id
-            WHERE u.user_id = ?
-            GROUP BY u.user_id
+                user_id,
+                full_name,
+                traffic_source
+            FROM users
+            WHERE user_id = ?
         """, (user_id,))
-
         row = await cur.fetchone()
         return dict(row) if row else None
+    
+async def get_user(user_id: int) -> dict | None:
+    """Возвращает данные пользователя по user_id, либо None, если пользователя нет."""
+    async with get_db_connection() as db:
+        async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None

@@ -52,11 +52,6 @@ async def show_variant_list(target, state: FSMContext):
             text=text,
             callback_data=f"admin_variant:view:{v['variant_key']}"
         )
-        # кнопка для офферов
-        kb.button(
-            text=f"🎯 Офферы {v['title']}",
-            callback_data=f"admin_offer:open:variant:{v['variant_key']}"
-        )
 
     kb.button(
         text="➕ Добавить вариант",
@@ -138,8 +133,6 @@ async def admin_variant_view(callback: types.CallbackQuery, state: FSMContext):
         text="🟢 Вкл/🔴 Выкл",
         callback_data=f"admin_variant:toggle:{variant_key}:{int(not variant['is_active'])}"
     )
-    # Кнопка для офферов
-    kb.button(text="🎯 Офферы варианта", callback_data=f"admin_offer:open:variant:{variant_key}")
     add_back_button(kb, back_data=f"admin_variant:open:{product_key}")
 
     await callback.message.edit_text(

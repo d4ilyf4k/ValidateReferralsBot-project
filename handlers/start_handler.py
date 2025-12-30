@@ -34,11 +34,13 @@ async def cmd_start(message: types.Message, state: FSMContext):
     source_data = TRAFFIC_SOURCES.get(DEFAULT_SOURCE)
 
     # Deep-link передает source через /start source_key
-    if message.text and len(message.text.split()) > 1:
-        raw = message.text.split(maxsplit=1)[1].lower()
-        if raw in TRAFFIC_SOURCES:
-            source_key = raw
-            source_data = TRAFFIC_SOURCES[raw]
+    if message.text:
+        parts = message.text.split(maxsplit=1)
+        if len(parts) > 1:
+            raw = parts[1].lower()
+            if raw in TRAFFIC_SOURCES:
+                source_key = raw
+                source_data = TRAFFIC_SOURCES[raw]
 
     # Сохраняем source в FSM, чтобы потом использовать при генерации ссылок
     await state.update_data(traffic_source=source_key)

@@ -23,8 +23,6 @@ class AdminCatalogFSM(StatesGroup):
     products = State()      # продукты банка
     add_product_key = State()
     add_product_title = State()
-    products_offers_menu = State()
-
 
 # ==========================
 # MAIN MENU
@@ -37,7 +35,7 @@ async def admin_catalog_entry(callback: types.CallbackQuery, state: FSMContext):
         "📦 Управление каталогом\nВыберите раздел:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🏦 Банки", callback_data="admin:catalog:banks")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:back")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
         ])
     )
     await callback.answer()
@@ -330,37 +328,3 @@ async def admin_add_product_title(message: types.Message, state: FSMContext):
         reply_markup=await get_admin_product_kb(bank_key)
     )
 
-
-# ==========================
-# PRODUCT SELECT MENU
-# ==========================
-@router.callback_query(F.data.startswith("admin_product:select:"))
-async def admin_product_select(callback: types.CallbackQuery, state: FSMContext):
-    product_key = callback.data.split(":", 2)[2]
-
-    data = await state.get_data()
-    bank_key = data.get("bank_key")
-    if not bank_key:
-        await callback.answer("⚠️ Ошибка: банк не выбран", show_alert=True)
-        return
-
-    await state.update_data(product_key=product_key)
-    await state.set_state(AdminCatalogFSM.products_offers_menu)
-
-    kb = InlineKeyboardBuilder()
-    kb.button(
-        text="🛍 Управление продуктами",
-        callback_data=f"admin_product:open:{product_key}:{bank_key}"
-    )
-    kb.button(
-        text="🎯 Управление офферами",
-        callback_data=f"admin_product:variants:{product_key}:{bank_key}"
-    )
-    add_back_button(kb, back_data=f"admin_bank:open:{bank_key}")
-    kb.adjust(1)
-
-    await callback.message.edit_text(
-        "Выберите действие для продукта:",
-        reply_markup=kb.as_markup()
-    )
-    await callback.answer()

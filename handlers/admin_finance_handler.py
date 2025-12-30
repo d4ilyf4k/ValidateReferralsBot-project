@@ -5,7 +5,7 @@ from aiogram.types import BufferedInputFile
 from config import settings
 from datetime import datetime
 from db.finance import get_admin_traffic_overview
-from services.referrer_report_generator import build_referrer_json_report
+from services.referrer_report_generator import build_referrer_report
 from utils.keyboards import get_admin_panel_kb
 
 router = Router()
@@ -24,7 +24,7 @@ async def admin_full_report(callback: types.CallbackQuery):
     await callback.answer("⏳ Формирую отчёт…")
 
     try:
-        json_data = await build_referrer_json_report()
+        json_data = await build_referrer_report()
 
         if not json_data:
             await callback.message.answer("📭 Нет данных для отчёта.")

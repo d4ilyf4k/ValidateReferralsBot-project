@@ -4,9 +4,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from urllib.parse import urlparse, urlencode, urlunparse, parse_qs
-
+#from db.applications import create_application
 from utils.traffic_sources import DEFAULT_SOURCE
 from utils.keyboards import get_user_bank_kb, get_user_main_menu_kb
+from db.users import get_user
 from db.banks import get_active_banks
 from db.products import get_products_by_bank
 from db.variants import get_variants
@@ -238,14 +239,29 @@ async def view_product_conditions(callback: types.CallbackQuery, state: FSMConte
 async def apply_offer(callback: types.CallbackQuery, state: FSMContext):
     try:
         data = await state.get_data()
+        
         bank_key = data.get("bank_key")
-        traffic_source = data.get("traffic_source", DEFAULT_SOURCE)
+        if not bank_key:
+            await callback.answer("❌ Ошибка: банк не выбран.", show_alert=True)
+            return
 
+        user = await get_user(callback.from_user.id)
+
+        traffic_source = user["traffic_source"] if user else DEFAULT_SOURCE
+        if not traffic_source:
+            user = await get_user(callback.from_user.id)
+            traffic_source = user.get("traffic_source", DEFAULT_SOURCE)
+        
         payload = callback.data.split(":", 1)[1]
         product_key, variant_key = payload.split("|") if "|" in payload else (payload, None)
         if variant_key == "0":
             variant_key = None
 
+        logging.info(
+            f"User {callback.from_user.id} is generating a referral link | "
+            f"Bank: {bank_key} | Product: {product_key} | Variant: {variant_key} | Source: {traffic_source}"
+        )
+        
         final_url = await build_final_referral_url(
             base_url=None,
             bank_key=bank_key,
@@ -257,9 +273,10 @@ async def apply_offer(callback: types.CallbackQuery, state: FSMContext):
         if not final_url:
             raise ValueError("Ссылка не найдена")
 
+
         await callback.message.answer(
             f"🔗 Ваша уникальная ссылка:\n{final_url}",
-            disable_web_page_preview=True,
+            disable_web_page_preview=False,
             reply_markup=get_user_main_menu_kb()
         )
         await state.clear()
