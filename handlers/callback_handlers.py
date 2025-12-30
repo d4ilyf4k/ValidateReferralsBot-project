@@ -12,7 +12,6 @@ from db.finance import (
 
 from db.finance import get_admin_traffic_overview
 from services.referrer_report_generator import generate_admin_dashboard_text, build_referrer_report
-from services.pdf_report_generator import build_admin_pdf_report
 from utils.keyboards import (
     get_admin_panel_kb,
     get_admin_dashboard_kb,
@@ -237,42 +236,6 @@ async def admin_report_json(cb: CallbackQuery):
         )
     )
     await cb.answer()
-
-
-@router.callback_query(F.data == "admin:report:pdf")
-async def admin_report_pdf(cb: CallbackQuery):
-    if not is_admin(cb.from_user.id):
-        return await cb.answer("⛔️ Нет доступа", show_alert=True)
-
-    # ===== Формируем отчёт =====
-    report = await build_referrer_report()
-
-    # ===== Папка для архивных еженедельных PDF =====
-    output_dir = os.path.join(os.getcwd(), "data", "reports", "weekly")
-    os.makedirs(output_dir, exist_ok=True)
-
-    # ===== Генерируем уникальное имя файла =====
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    pdf_filename = f"admin_report_weekly_{timestamp}.pdf"
-    pdf_path = os.path.join(output_dir, pdf_filename)
-
-    try:
-        # ===== Генерация PDF =====
-        build_admin_pdf_report(report, pdf_path)
-
-        # ===== Отправка PDF =====
-        await cb.message.answer_document(
-            types.FSInputFile(pdf_path),
-            caption=f"📄 Еженедельный отчёт ({timestamp})"
-        )
-
-        await cb.answer()
-
-    except Exception as e:
-        await cb.answer(
-            f"❌ Ошибка при генерации отчёта:\n{str(e)[:300]}",
-            show_alert=True
-        )
 
 @router.callback_query(F.data == "admin_back")
 async def admin_back(callback: CallbackQuery):
